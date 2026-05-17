@@ -26,10 +26,12 @@ gemini = genai.GenerativeModel("gemini-1.5-flash")
 eleven = ElevenLabs(api_key=ELEVENLABS_KEY)
 
 VOICES = {
-    "Rachel": "21m00Tcm4TlvDq8ikWAM",
-    "Domi":   "AZnzlk1XvdvUeBnXmlld",
-    "Bella":  "EXAVITQu4vr4xnSDxMaL",
-    "Elli":   "MF3mGyEYCl7XYWbV9V6O",
+    "Rachel":  "21m00Tcm4TlvDq8ikWAM",
+    "Domi":    "AZnzlk1XvdvUeBnXmlld",
+    "Bella":   "EXAVITQu4vr4xnSDxMaL",
+    "Elli":    "MF3mGyEYCl7XYWbV9V6O",
+    "Matilda": "z7HRV20pBAAeVnQFAOXX",
+    "Aria":    "hNsVcO9DnD6NFXgIEQ4f",
 }
 
 WAIT_TEXT, WAIT_TRX, WAIT_PLAN_SELECT = range(3)
@@ -49,12 +51,12 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await db.upsert_user(user.id, user.username, user.full_name)
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎤 Voice বানান", callback_data="menu_voice")],
-        [InlineKeyboardButton("💳 Subscribe করুন", callback_data="menu_pay")],
-        [InlineKeyboardButton("📊 আমার Usage", callback_data="menu_stats")],
+        [InlineKeyboardButton("🎤 Generate Voice", callback_data="menu_voice")],
+        [InlineKeyboardButton("💳 Subscribe", callback_data="menu_pay")],
+        [InlineKeyboardButton("📊 My Usage", callback_data="menu_stats")],
     ])
     await update.message.reply_text(
-        f"👋 স্বাগতম {user.first_name}!\n\n🎤 Text কে Girls Voice এ convert করুন!\n\nনিচের menu থেকে শুরু করুন 👇",
+        f"hey {user.first_name} 👋\n\ntype anything and i'll turn it into a girl's voice 🎙\n\nuse the menu below to get started 👇",
         reply_markup=kb
     )
 
@@ -62,12 +64,12 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def voice_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if await db.is_banned(user_id):
-        await update.message.reply_text("❌ আপনি banned।")
+        await update.message.reply_text("you're banned lol")
         return ConversationHandler.END
 
     can, reason = await db.can_use_voice(user_id)
     if not can:
-        msg = "❌ Subscription নেই! /pay দিয়ে subscribe করুন।" if reason == "no_sub" else "❌ Voice limit শেষ! /pay দিয়ে renew করুন।"
+        msg = "you don't have an active plan. use /pay to subscribe 👀" if reason == "no_sub" else "you've hit your voice limit. use /pay to get more 🙏"
         await update.message.reply_text(msg)
         return ConversationHandler.END
 
@@ -79,7 +81,7 @@ async def voice_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             keyboard.append(row); row = []
     if row: keyboard.append(row)
     keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel")])
-    await update.message.reply_text("🎤 Voice select করুন:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("pick a voice 👇", reply_markup=InlineKeyboardMarkup(keyboard))
     return WAIT_TEXT
 
 
@@ -87,7 +89,7 @@ async def voice_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     ctx.user_data["voice"] = query.data.replace("sv_", "")
-    await query.edit_message_text(f"✅ {ctx.user_data['voice']} selected!\n\nএখন text লিখুন:")
+    await query.edit_message_text(f"nice! {ctx.user_data['voice']} it is 🎙\n\nnow send me the text:")
     return WAIT_TEXT
 
 
@@ -96,20 +98,20 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
     if len(text) < 2:
-        await update.message.reply_text("❌ কিছু লিখুন!")
+        await update.message.reply_text("say something lol")
         return WAIT_TEXT
     if len(text) > 500:
-        await update.message.reply_text("❌ সর্বোচ্চ 500 character!")
+        await update.message.reply_text("too long! keep it under 500 chars")
         return WAIT_TEXT
 
     can, reason = await db.can_use_voice(user_id)
     if not can:
-        await update.message.reply_text("❌ Limit শেষ! /pay দিয়ে subscribe করুন।")
+        await update.message.reply_text("limit hit! use /pay to get more")
         return ConversationHandler.END
 
     voice_name = ctx.user_data.get("voice", "Rachel")
     voice_id = VOICES[voice_name]
-    msg = await update.message.reply_text("⏳ Voice তৈরি হচ্ছে...")
+    msg = await update.message.reply_text("generating... 🎙")
 
     try:
         improved = await improve_text(text)
@@ -128,12 +130,12 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await msg.delete()
         await update.message.reply_voice(
             voice=open(tmp, "rb"),
-            caption=f"🎤 {voice_name}\n📝 Original: {text}\n✨ Improved: {improved}\n🔢 Remaining: {remaining}"
+            caption=f"🎙 {voice_name}\n\noriginal: {text}\nimproved: {improved}\n\n{remaining} voices left"
         )
         os.unlink(tmp)
     except Exception as e:
         logger.error(e)
-        await msg.edit_text("❌ Error! আবার চেষ্টা করুন।")
+        await msg.edit_text("something went wrong. try again!")
 
     return ConversationHandler.END
 
@@ -141,9 +143,9 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = []
     for key, plan in db.PLANS.items():
-        kb.append([InlineKeyboardButton(f"{plan['label']} | ৳{plan['price_bdt']}", callback_data=f"bp_{key}")])
+        kb.append([InlineKeyboardButton(f"{plan['label']} | ৳{plan['price_bdt']} / ${plan['price_usdt']}", callback_data=f"bp_{key}")])
     kb.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel")])
-    await update.message.reply_text("💳 Plan select করুন:", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text("pick a plan 👇", reply_markup=InlineKeyboardMarkup(kb))
     return WAIT_PLAN_SELECT
 
 
@@ -160,7 +162,7 @@ async def plan_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
     ])
     await query.edit_message_text(
-        f"✅ {plan['label']} selected!\n💵 ৳{plan['price_bdt']} / ${plan['price_usdt']} USDT\n\nPayment method বেছে নিন:",
+        f"you picked {plan['label']} 👍\nprice: ৳{plan['price_bdt']} / ${plan['price_usdt']} USDT\n\nhow do you wanna pay?",
         reply_markup=kb
     )
     return WAIT_TRX
@@ -174,11 +176,11 @@ async def method_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     plan = db.PLANS[ctx.user_data["plan"]]
 
     if method == "bkash":
-        txt = f"📱 **bKash:**\nNumber: `{BKASH_NUMBER}`\nAmount: **৳{plan['price_bdt']}**\n\nTransaction ID পাঠান:"
+        txt = f"send ৳{plan['price_bdt']} to this bKash number:\n\n`{BKASH_NUMBER}`\n\nthen send me the transaction ID 👇"
     elif method == "nagad":
-        txt = f"📱 **Nagad:**\nNumber: `{NAGAD_NUMBER}`\nAmount: **৳{plan['price_bdt']}**\n\nTransaction ID পাঠান:"
+        txt = f"send ৳{plan['price_bdt']} to this Nagad number:\n\n`{NAGAD_NUMBER}`\n\nthen send me the transaction ID 👇"
     else:
-        txt = f"💰 **Binance:**\nID: `{BINANCE_ID}`\nAmount: **${plan['price_usdt']} USDT**\n\nTransaction ID পাঠান:"
+        txt = f"send ${plan['price_usdt']} USDT to this Binance ID:\n\n`{BINANCE_ID}`\n\nthen send me the transaction ID 👇"
 
     await query.edit_message_text(txt, parse_mode="Markdown")
     return WAIT_TRX
@@ -196,10 +198,10 @@ async def receive_trx(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await ctx.bot.send_message(
         chat_id=ADMIN_ID,
-        text=f"🔔 নতুন Payment!\n\n👤 {user.full_name} (@{user.username})\n🆔 `{user_id}`\n💳 {plan['label']}\n📱 {method.upper()}\n🧾 TRX: `{trx}`\n\nApprove: `/approve {trx}`",
+        text=f"💰 new payment request!\n\n👤 {user.full_name} (@{user.username})\nID: `{user_id}`\nplan: {plan['label']}\nmethod: {method.upper()}\nTRX: `{trx}`\n\nto approve: `/approve {trx}`",
         parse_mode="Markdown"
     )
-    await update.message.reply_text("✅ Payment request পাঠানো হয়েছে!\nAdmin verify করলে আপনার subscription active হবে।")
+    await update.message.reply_text("got it! your request is sent 🙏\nadmin will verify and activate your plan soon.")
     return ConversationHandler.END
 
 
@@ -207,19 +209,19 @@ async def approve_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     if not ctx.args:
-        await update.message.reply_text("Usage: /approve TRX_ID")
+        await update.message.reply_text("usage: /approve TRX_ID")
         return
     payment = await db.approve_payment(ctx.args[0])
     if not payment:
-        await update.message.reply_text("❌ Payment পাওয়া যায়নি!")
+        await update.message.reply_text("payment not found!")
         return
     await db.create_subscription(payment["user_id"], payment["plan"])
     plan = db.PLANS[payment["plan"]]
-    await update.message.reply_text(f"✅ Approved! {plan['label']} active করা হয়েছে।")
+    await update.message.reply_text(f"✅ done! {plan['label']} activated.")
     try:
         await ctx.bot.send_message(
             payment["user_id"],
-            f"🎉 Subscription Active!\n✅ {plan['label']}\n🎤 {plan['voice_limit']} voices/month\n\n/voice দিয়ে শুরু করুন!"
+            f"you're in! 🎉\n\nplan: {plan['label']}\nvoices: {plan['voice_limit']}/month\n\nuse /voice to start generating!"
         )
     except Exception:
         pass
@@ -227,7 +229,7 @@ async def approve_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def admin_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Not admin!")
+        await update.message.reply_text("nope, not for you 😅")
         return
     stats = await db.get_admin_stats()
     kb = InlineKeyboardMarkup([
@@ -235,7 +237,7 @@ async def admin_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⏳ Pending Payments", callback_data="adm_pending")],
     ])
     await update.message.reply_text(
-        f"🛠 Admin Panel\n\n👥 Users: {stats['total_users']}\n✅ Active Subs: {stats['active_subs']}\n🎤 Voices: {stats['total_voices']}\n💰 Payments: {stats['total_payments']}\n⏳ Pending: {stats['pending_payments']}",
+        f"admin panel 🛠\n\nusers: {stats['total_users']}\nactive subs: {stats['active_subs']}\ntotal voices: {stats['total_voices']}\npayments: {stats['total_payments']}\npending: {stats['pending_payments']}",
         reply_markup=kb
     )
 
@@ -247,16 +249,16 @@ async def admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     if query.data == "adm_users":
         users = await db.get_all_users()
-        text = "👥 Recent Users:\n\n"
+        text = "recent users:\n\n"
         for u in users:
-            text += f"• {u['full_name']} | {u['plan'] or 'No plan'} | ID: {u['user_id']}\n"
+            text += f"• {u['full_name']} | {u['plan'] or 'no plan'} | {u['user_id']}\n"
         await query.edit_message_text(text[:4000])
     elif query.data == "adm_pending":
         payments = await db.get_pending_payments()
         if not payments:
-            await query.edit_message_text("✅ কোনো pending নেই!")
+            await query.edit_message_text("no pending payments!")
             return
-        text = "⏳ Pending:\n\n"
+        text = "pending payments:\n\n"
         for p in payments:
             text += f"• {p['full_name']} | {p['plan']} | {p['method']}\n  TRX: {p['trx_id']}\n  /approve {p['trx_id']}\n\n"
         await query.edit_message_text(text[:4000])
@@ -265,12 +267,12 @@ async def admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def mystats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     sub = await db.get_active_subscription(update.effective_user.id)
     if not sub:
-        await update.message.reply_text("❌ Subscription নেই! /pay দিয়ে subscribe করুন।")
+        await update.message.reply_text("you don't have a plan yet. use /pay to subscribe!")
         return
     plan = db.PLANS.get(sub["plan"], {})
     remaining = sub["voice_limit"] - sub["voices_used"]
     await update.message.reply_text(
-        f"📊 আপনার Stats:\n\n✅ Plan: {plan.get('label', sub['plan'])}\n🎤 Used: {sub['voices_used']}/{sub['voice_limit']}\n🔢 Remaining: {remaining}\n📅 Expires: {sub['expires_at'][:10]}"
+        f"your stats 📊\n\nplan: {plan.get('label', sub['plan'])}\nused: {sub['voices_used']}/{sub['voice_limit']}\nleft: {remaining}\nexpires: {sub['expires_at'][:10]}"
     )
 
 
@@ -278,13 +280,13 @@ async def menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if query.data == "menu_voice":
-        await query.message.reply_text("👉 /voice লিখুন!")
+        await query.message.reply_text("use /voice to generate!")
     elif query.data == "menu_pay":
-        await query.message.reply_text("👉 /pay লিখুন!")
+        await query.message.reply_text("use /pay to subscribe!")
     elif query.data == "menu_stats":
-        await query.message.reply_text("👉 /mystats লিখুন!")
+        await query.message.reply_text("use /mystats to check your usage!")
     elif query.data == "cancel":
-        await query.edit_message_text("❌ Cancelled.")
+        await query.edit_message_text("cancelled.")
 
 
 async def post_init(app):
@@ -326,7 +328,7 @@ def main():
     app.add_handler(CallbackQueryHandler(admin_cb, pattern="^adm_"))
     app.add_handler(CallbackQueryHandler(menu_cb, pattern="^menu_|^cancel$"))
 
-    logger.info("✅ Bot started!")
+    logger.info("Bot started!")
     app.run_polling(drop_pending_updates=True)
 
 
