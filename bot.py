@@ -1,5 +1,4 @@
 import os
-import asyncio
 import logging
 import tempfile
 import google.generativeai as genai
@@ -39,7 +38,7 @@ WAIT_TEXT, WAIT_TRX, WAIT_PLAN_SELECT = range(3)
 async def improve_text(text):
     try:
         r = gemini.generate_content(
-            f"Improve this text for natural speech. Return only improved text, nothing else:\n\n{text}"
+            f"Improve this text for natural speech. Return only improved text:\n\n{text}"
         )
         return r.text.strip()
     except Exception:
@@ -80,7 +79,6 @@ async def voice_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             keyboard.append(row); row = []
     if row: keyboard.append(row)
     keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel")])
-
     await update.message.reply_text("🎤 Voice select করুন:", reply_markup=InlineKeyboardMarkup(keyboard))
     return WAIT_TEXT
 
@@ -201,7 +199,7 @@ async def receive_trx(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         text=f"🔔 নতুন Payment!\n\n👤 {user.full_name} (@{user.username})\n🆔 `{user_id}`\n💳 {plan['label']}\n📱 {method.upper()}\n🧾 TRX: `{trx}`\n\nApprove: `/approve {trx}`",
         parse_mode="Markdown"
     )
-    await update.message.reply_text("✅ Payment request পাঠানো হয়েছে!\n\nAdmin verify করলে আপনার subscription active হবে। সাধারণত ১-৩ ঘণ্টার মধ্যে।")
+    await update.message.reply_text("✅ Payment request পাঠানো হয়েছে!\nAdmin verify করলে আপনার subscription active হবে।")
     return ConversationHandler.END
 
 
@@ -289,9 +287,12 @@ async def menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Cancelled.")
 
 
-async def main():
+async def post_init(app):
     await db.init_db()
-    app = Application.builder().token(BOT_TOKEN).build()
+
+
+def main():
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     voice_conv = ConversationHandler(
         entry_points=[CommandHandler("voice", voice_command)],
@@ -326,8 +327,8 @@ async def main():
     app.add_handler(CallbackQueryHandler(menu_cb, pattern="^menu_|^cancel$"))
 
     logger.info("✅ Bot started!")
-    await app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
