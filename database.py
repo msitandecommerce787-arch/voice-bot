@@ -5,9 +5,14 @@ from datetime import datetime, timedelta
 DB_PATH = "bot.db"
 
 PLANS = {
-    "basic": {"price_bdt": 100, "price_usdt": 1, "voice_limit": 50, "days": 30, "label": "🥉 Basic - 50 voice/month"},
-    "pro":   {"price_bdt": 200, "price_usdt": 2, "voice_limit": 150, "days": 30, "label": "🥈 Pro - 150 voice/month"},
-    "elite": {"price_bdt": 400, "price_usdt": 4, "voice_limit": 500, "days": 30, "label": "🥇 Elite - 500 voice/month"},
+    "basic":   {"price_bdt": 100,  "price_usdt": 1,  "voice_limit": 5,   "days": 30, "label": "🥉 Basic — 5 voice"},
+    "pro":     {"price_bdt": 200,  "price_usdt": 2,  "voice_limit": 10,  "days": 30, "label": "🥈 Pro — 10 voice"},
+    "elite":   {"price_bdt": 300,  "price_usdt": 3,  "voice_limit": 15,  "days": 30, "label": "🥇 Elite — 15 voice"},
+    "gold":    {"price_bdt": 400,  "price_usdt": 4,  "voice_limit": 20,  "days": 30, "label": "💎 Gold — 20 voice"},
+    "premium": {"price_bdt": 500,  "price_usdt": 5,  "voice_limit": 25,  "days": 30, "label": "👑 Premium — 25 voice"},
+    "ultra":   {"price_bdt": 1000, "price_usdt": 10, "voice_limit": 50,  "days": 30, "label": "🔥 Ultra — 50 voice"},
+    "mega":    {"price_bdt": 2000, "price_usdt": 20, "voice_limit": 100, "days": 30, "label": "💠 Mega — 100 voice"},
+    "max":     {"price_bdt": 4000, "price_usdt": 40, "voice_limit": 200, "days": 30, "label": "🚀 Max — 200 voice"},
 }
 
 
