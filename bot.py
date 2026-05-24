@@ -11,6 +11,12 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes, filters, ConversationHandler
 )
 import database as db
+from scheduler import start_scheduler
+try:
+    from invoice import generate_invoice
+    HAS_INVOICE = True
+except Exception:
+    HAS_INVOICE = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -779,3 +785,106 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# These functions are appended - they will be registered in main()
+
+async def birthday_command(update, ctx):
+    await update.message.reply_text(
+        "🎂 তোমার জন্মদিন কবে?\n\nFormat: DD-MM-YYYY\nExample: 15-03-1995"
+    )
+    ctx.user_data["setting_birthday"] = True
+
+
+async def streak_command(update, ctx):
+    user_id = update.effective_user.id
+    streak = await db.get_streak(user_id)
+    if not streak:
+        await update.message.reply_text("এখনো কোনো streak নেই! প্রতিদিন voice বানালে streak বাড়বে 🔥")
+        return
+    fire = "🔥" * min(streak["current_streak"], 10)
+    await update.message.reply_text(
+        f"🔥 Streak:\n\n{fire}\n\n"
+        f"📅 Current: {streak['current_streak']} days\n"
+        f"🏆 Best: {streak['max_streak']} days\n\n"
+        f"প্রতিদিন voice বানাও streak ধরে রাখো!"
+    )
+
+
+async def search_command(update, ctx):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not ctx.args:
+        await update.message.reply_text("Usage: /search name বা /search user_id")
+        return
+    query = " ".join(ctx.args)
+    results = await db.search_user(query)
+    if not results:
+        await update.message.reply_text("❌ কোনো user পাওয়া যায়নি!")
+        return
+    text = "🔍 Search Results:\n\n"
+    for u in results:
+        ban = "🚫" if u["is_banned"] else "✅"
+        text += f"{ban} {u['full_name']} (@{u['username'] or 'N/A'})\nID: `{u['user_id']}`\nJoined: {u['joined_at'][:10]}\n\n"
+    await update.message.reply_text(text[:4000], parse_mode="Markdown")
+
+
+async def givevoice_command(update, ctx):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not ctx.args or len(ctx.args) < 2:
+        await update.message.reply_text("Usage: /givevoice USER_ID AMOUNT")
+        return
+    try:
+        user_id, amount = int(ctx.args[0]), int(ctx.args[1])
+        await db.give_free_voices(user_id, amount)
+        await update.message.reply_text(f"✅ {user_id} কে +{amount} voices দেওয়া হয়েছে!")
+        try:
+            await ctx.bot.send_message(user_id, f"🎁 তোমাকে +{amount} bonus voices দেওয়া হয়েছে! 🎤")
+        except Exception:
+            pass
+    except Exception:
+        await update.message.reply_text("❌ Error! Format: /givevoice 123456 10")
+
+
+async def backup_command(update, ctx):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    import shutil
+    import os
+    try:
+        backup_path = f"backup_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.db"
+        shutil.copy("bot.db", backup_path)
+        await update.message.reply_document(
+            document=open(backup_path, "rb"),
+            filename=backup_path,
+            caption="✅ Database backup!"
+        )
+        os.unlink(backup_path)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Backup failed: {e}")
+
+
+async def errorlog_command(update, ctx):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    logs = await db.get_error_logs(10)
+    if not logs:
+        await update.message.reply_text("✅ কোনো error নেই!")
+        return
+    text = "🔴 Error Logs:\n\n"
+    for log in logs:
+        text += f"• {log['created_at'][:16]} | User: {log['user_id']}\n{log['error'][:100]}\n\n"
+    await update.message.reply_text(text[:4000])
+
+
+async def waitlist_command(update, ctx):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    wl = await db.get_waitlist()
+    if not wl:
+        await update.message.reply_text("✅ Waiting list খালি!")
+        return
+    text = "⏳ Waiting List:\n\n"
+    for w in wl:
+        text += f"• {w['full_name']} | {w['plan']} | {w['created_at'][:10]}\n"
+    await update.message.reply_text(text[:4000])
