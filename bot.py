@@ -321,9 +321,23 @@ async def coupon_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def receive_coupon(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     code = update.message.text.strip()
+
+    # Allow reset/cancel during coupon entry
+    skip = ["🎤 Voice বানান", "💳 Subscribe করুন", "📊 আমার Usage", "⚙️ Settings", "👥 Referral", "📜 History", "🛠 Admin Panel", "🔄 Reset"]
+    if code in skip:
+        ctx.user_data.clear()
+        user = update.effective_user
+        from telegram import ReplyKeyboardMarkup
+        kb = admin_keyboard() if user.id == ADMIN_ID else main_keyboard()
+        await update.message.reply_text("🔄 Reset হয়ে গেছে!", reply_markup=kb)
+        return ConversationHandler.END
+
     coupon = await db.use_coupon(code)
     if not coupon:
-        await update.message.reply_text("❌ Invalid বা expired coupon!")
+        await update.message.reply_text(
+            "❌ Invalid বা expired coupon!\n\n"
+            "আবার try করো অথবা /reset লেখো বাতিল করতে।"
+        )
         return WAIT_COUPON
     ctx.user_data["discount"] = coupon["discount_percent"]
     await update.message.reply_text(f"✅ Coupon applied! {coupon['discount_percent']}% discount পেয়েছো!")
@@ -607,6 +621,13 @@ async def handle_buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await admin_text_handler(update, ctx)
 
 
+async def reset_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data.clear()
+    user = update.effective_user
+    kb = admin_keyboard() if user.id == ADMIN_ID else main_keyboard()
+    await update.message.reply_text("🔄 Reset হয়ে গেছে!", reply_markup=kb)
+
+
 async def post_init(app):
     await db.init_db()
 
@@ -652,6 +673,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("mystats", mystats))
+    app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(voice_conv)
     app.add_handler(pay_conv)
     app.add_handler(CallbackQueryHandler(payment_action_cb, pattern="^approve_|^reject_"))
