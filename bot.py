@@ -37,7 +37,7 @@ VOICES = {
 }
 
 SPEED_OPTIONS = {
-    "🐢 Very Slow": 0.55,
+    "🐢 Very Slow": 0.70,
     "🐌 Slow": 0.70,
     "🚶 Normal": 0.85,
     "🏃 Fast": 1.0,
@@ -179,7 +179,7 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         improved = await improve_text(text)
 
         audio1 = make_voice(improved, voice_id, stability=0.50, similarity=0.75, style=0.10, speed=speed)
-        audio2 = make_voice(improved, voice_id, stability=0.35, similarity=0.85, style=0.30, speed=max(0.45, speed - 0.15))
+        audio2 = make_voice(improved, voice_id, stability=0.35, similarity=0.85, style=0.30, speed=max(0.7, speed - 0.15))
 
         tmp1 = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
         tmp1.write(audio1); tmp1.close()
