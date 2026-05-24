@@ -51,6 +51,7 @@ def main_keyboard():
         ["🎤 Voice বানান", "💳 Subscribe করুন"],
         ["📊 আমার Usage", "⚙️ Settings"],
         ["👥 Referral", "📜 History"],
+        ["🔄 Reset"],
     ], resize_keyboard=True)
 
 
@@ -59,6 +60,7 @@ def admin_keyboard():
         ["🎤 Voice বানান", "💳 Subscribe করুন"],
         ["📊 আমার Usage", "⚙️ Settings"],
         ["👥 Referral", "📜 History"],
+        ["🔄 Reset"],
         ["🛠 Admin Panel"],
     ], resize_keyboard=True)
 
@@ -152,7 +154,7 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    skip = ["🎤 Voice বানান", "💳 Subscribe করুন", "📊 আমার Usage", "⚙️ Settings", "👥 Referral", "📜 History", "🛠 Admin Panel"]
+    skip = ["🎤 Voice বানান", "💳 Subscribe করুন", "📊 আমার Usage", "⚙️ Settings", "👥 Referral", "📜 History", "🛠 Admin Panel", "🔄 Reset"]
     if text in skip:
         return ConversationHandler.END
 
@@ -353,7 +355,7 @@ async def receive_trx(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     trx = update.message.text.strip()
 
-    skip = ["🎤 Voice বানান", "💳 Subscribe করুন", "📊 আমার Usage", "⚙️ Settings", "👥 Referral", "📜 History", "🛠 Admin Panel"]
+    skip = ["🎤 Voice বানান", "💳 Subscribe করুন", "📊 আমার Usage", "⚙️ Settings", "👥 Referral", "📜 History", "🛠 Admin Panel", "🔄 Reset"]
     if trx in skip:
         return ConversationHandler.END
 
@@ -596,6 +598,11 @@ async def handle_buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await history_command(update, ctx)
     elif text == "🛠 Admin Panel" and user_id == ADMIN_ID:
         await admin_command(update, ctx)
+    elif text == "🔄 Reset":
+        ctx.user_data.clear()
+        user = update.effective_user
+        kb = admin_keyboard() if user.id == ADMIN_ID else main_keyboard()
+        await update.message.reply_text("🔄 Reset হয়ে গেছে!", reply_markup=kb)
     elif ctx.user_data.get("admin_action"):
         await admin_text_handler(update, ctx)
 
