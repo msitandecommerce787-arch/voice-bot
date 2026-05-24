@@ -137,8 +137,8 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         # Version 1 - Slow & natural
         audio1 = make_voice(improved, voice_id, stability=0.50, similarity=0.75, style=0.10, speed=0.72)
-        # Version 2 - Very slow & emotional
-        audio2 = make_voice(improved, voice_id, stability=0.35, similarity=0.85, style=0.30, speed=0.60)
+        # Version 2 - Slow & emotional (fixed: min speed is 0.70)
+        audio2 = make_voice(improved, voice_id, stability=0.35, similarity=0.85, style=0.30, speed=0.70)
 
         tmp1 = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
         tmp1.write(audio1); tmp1.close()
@@ -154,7 +154,7 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await msg.delete()
         await update.message.reply_text(f"✨ Improved: {improved}\n🔢 Remaining: {remaining}")
         await update.message.reply_voice(voice=open(tmp1.name, "rb"), caption="🎤 Version 1 — Slow & Natural")
-        await update.message.reply_voice(voice=open(tmp2.name, "rb"), caption="🎤 Version 2 — Very Slow & Emotional")
+        await update.message.reply_voice(voice=open(tmp2.name, "rb"), caption="🎤 Version 2 — Slow & Emotional")
 
         os.unlink(tmp1.name)
         os.unlink(tmp2.name)
