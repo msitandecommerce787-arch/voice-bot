@@ -498,3 +498,161 @@ async def get_sales_report():
             row = await cur.fetchone()
             report["weekly"] = row["total"] or 0
         return report
+
+
+# ── STREAK ────────────────────────────────────────────────────
+async def update_streak(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS streaks (
+                    user_id INTEGER PRIMARY KEY,
+                    current_streak INTEGER DEFAULT 0,
+                    last_used TEXT,
+                    max_streak INTEGER DEFAULT 0
+                )
+            """)
+            await db.commit()
+        except Exception:
+            pass
+
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM streaks WHERE user_id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+
+        today = datetime.utcnow().date().isoformat()
+        if not row:
+            await db.execute("INSERT INTO streaks (user_id, current_streak, last_used, max_streak) VALUES (?, 1, ?, 1)", (user_id, today))
+        else:
+            last = row["last_used"]
+            yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
+            if last == today:
+                pass  # Already used today
+            elif last == yesterday:
+                new_streak = row["current_streak"] + 1
+                max_s = max(new_streak, row["max_streak"])
+                await db.execute("UPDATE streaks SET current_streak=?, last_used=?, max_streak=? WHERE user_id=?",
+                                 (new_streak, today, max_s, user_id))
+            else:
+                await db.execute("UPDATE streaks SET current_streak=1, last_used=? WHERE user_id=?", (today, user_id))
+        await db.commit()
+
+
+async def get_streak(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute("CREATE TABLE IF NOT EXISTS streaks (user_id INTEGER PRIMARY KEY, current_streak INTEGER DEFAULT 0, last_used TEXT, max_streak INTEGER DEFAULT 0)")
+            await db.commit()
+        except Exception:
+            pass
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM streaks WHERE user_id=?", (user_id,)) as cur:
+            return await cur.fetchone()
+
+
+# ── BIRTHDAY ──────────────────────────────────────────────────
+async def set_birthday(user_id, birthday):
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN birthday TEXT")
+            await db.commit()
+        except Exception:
+            pass
+        await db.execute("UPDATE users SET birthday=? WHERE user_id=?", (birthday, user_id))
+        await db.commit()
+
+
+async def get_birthday_users():
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        today = datetime.utcnow().strftime("%m-%d")
+        try:
+            async with db.execute("SELECT user_id, full_name FROM users WHERE birthday LIKE ?", (f"%-{today}",)) as cur:
+                return await cur.fetchall()
+        except Exception:
+            return []
+
+
+# ── ERROR LOG ─────────────────────────────────────────────────
+async def log_error(error_msg, user_id=None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS error_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    error TEXT,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            await db.execute("INSERT INTO error_logs (user_id, error) VALUES (?, ?)", (user_id, str(error_msg)[:500]))
+            await db.commit()
+        except Exception:
+            pass
+
+
+async def get_error_logs(limit=10):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        try:
+            async with db.execute("SELECT * FROM error_logs ORDER BY created_at DESC LIMIT ?", (limit,)) as cur:
+                return await cur.fetchall()
+        except Exception:
+            return []
+
+
+# ── USER SEARCH ───────────────────────────────────────────────
+async def search_user(query):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        try:
+            user_id = int(query)
+            async with db.execute("SELECT * FROM users WHERE user_id=?", (user_id,)) as cur:
+                row = await cur.fetchone()
+                return [row] if row else []
+        except ValueError:
+            async with db.execute("SELECT * FROM users WHERE full_name LIKE ? OR username LIKE ? LIMIT 5",
+                                   (f"%{query}%", f"%{query}%")) as cur:
+                return await cur.fetchall()
+
+
+# ── WAITING LIST ──────────────────────────────────────────────
+async def add_to_waitlist(user_id, plan):
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS waitlist (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    plan TEXT,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )
+            """)
+            await db.execute("INSERT INTO waitlist (user_id, plan) VALUES (?, ?)", (user_id, plan))
+            await db.commit()
+        except Exception:
+            pass
+
+
+async def get_waitlist():
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        try:
+            async with db.execute("""
+                SELECT w.*, u.full_name, u.username FROM waitlist w
+                LEFT JOIN users u ON w.user_id = u.user_id
+                ORDER BY w.created_at ASC
+            """) as cur:
+                return await cur.fetchall()
+        except Exception:
+            return []
+
+
+# ── GIVE FREE VOICES ──────────────────────────────────────────
+async def give_free_voices(user_id, amount):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE subscriptions SET voice_limit = voice_limit + ?
+            WHERE user_id=? AND is_active=1 AND expires_at > datetime('now')
+        """, (amount, user_id))
+        await db.commit()
