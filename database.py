@@ -24,7 +24,9 @@ async def init_db():
                 username TEXT,
                 full_name TEXT,
                 joined_at TEXT DEFAULT (datetime('now')),
-                is_banned INTEGER DEFAULT 0
+                is_banned INTEGER DEFAULT 0,
+                referral_code TEXT,
+                referred_by INTEGER
             )
         """)
         await db.execute("""
@@ -56,32 +58,92 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS voice_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
+                voice_name TEXT,
                 text_length INTEGER,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS favorite_voices (
+                user_id INTEGER PRIMARY KEY,
+                voice_name TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_speed (
+                user_id INTEGER PRIMARY KEY,
+                speed REAL DEFAULT 0.75
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS coupons (
+                code TEXT PRIMARY KEY,
+                discount_percent INTEGER,
+                max_uses INTEGER,
+                used_count INTEGER DEFAULT 0,
+                is_active INTEGER DEFAULT 1
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS referrals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                referrer_id INTEGER,
+                referred_id INTEGER,
+                bonus_voices INTEGER DEFAULT 3,
                 created_at TEXT DEFAULT (datetime('now'))
             )
         """)
         await db.commit()
 
+        # Add referral_code for existing users
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN referral_code TEXT")
+            await db.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
+            await db.commit()
+        except Exception:
+            pass
 
+
+# ── USER ──────────────────────────────────────────────────────
 async def upsert_user(user_id, username, full_name):
+    import random, string
+    ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
-            INSERT INTO users (user_id, username, full_name)
-            VALUES (?, ?, ?)
+            INSERT INTO users (user_id, username, full_name, referral_code)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
-                username=excluded.username, full_name=excluded.full_name
-        """, (user_id, username or "", full_name or ""))
+                username=excluded.username,
+                full_name=excluded.full_name
+        """, (user_id, username or "", full_name or "", ref_code))
         await db.commit()
 
 
-async def is_banned(user_id):
+async def get_user(user_id):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT is_banned FROM users WHERE user_id=?", (user_id,)) as cur:
-            row = await cur.fetchone()
-            return bool(row and row["is_banned"])
+        async with db.execute("SELECT * FROM users WHERE user_id=?", (user_id,)) as cur:
+            return await cur.fetchone()
 
 
+async def is_banned(user_id):
+    user = await get_user(user_id)
+    return bool(user and user["is_banned"])
+
+
+async def ban_user(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET is_banned=1 WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+async def unban_user(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET is_banned=0 WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+# ── SUBSCRIPTION ──────────────────────────────────────────────
 async def get_active_subscription(user_id):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -111,7 +173,7 @@ async def increment_voice_usage(user_id):
         await db.commit()
 
 
-async def create_subscription(user_id, plan):
+async def create_subscription(user_id, plan, bonus=0):
     plan_data = PLANS[plan]
     expires = (datetime.utcnow() + timedelta(days=plan_data["days"])).isoformat()
     started = datetime.utcnow().isoformat()
@@ -120,10 +182,117 @@ async def create_subscription(user_id, plan):
         await db.execute("""
             INSERT INTO subscriptions (user_id, plan, voice_limit, started_at, expires_at)
             VALUES (?, ?, ?, ?, ?)
-        """, (user_id, plan, plan_data["voice_limit"], started, expires))
+        """, (user_id, plan, plan_data["voice_limit"] + bonus, started, expires))
         await db.commit()
 
 
+# ── SPEED ─────────────────────────────────────────────────────
+async def get_user_speed(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT speed FROM user_speed WHERE user_id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            return row["speed"] if row else 0.75
+
+
+async def set_user_speed(user_id, speed):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO user_speed (user_id, speed) VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET speed=excluded.speed
+        """, (user_id, speed))
+        await db.commit()
+
+
+# ── FAVORITE VOICE ────────────────────────────────────────────
+async def get_favorite_voice(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT voice_name FROM favorite_voices WHERE user_id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            return row["voice_name"] if row else None
+
+
+async def set_favorite_voice(user_id, voice_name):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO favorite_voices (user_id, voice_name) VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET voice_name=excluded.voice_name
+        """, (user_id, voice_name))
+        await db.commit()
+
+
+# ── VOICE HISTORY ─────────────────────────────────────────────
+async def log_voice(user_id, voice_name, text_length):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO voice_logs (user_id, voice_name, text_length) VALUES (?, ?, ?)
+        """, (user_id, voice_name, text_length))
+        await db.commit()
+
+
+async def get_voice_history(user_id, limit=5):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT voice_name, text_length, created_at FROM voice_logs
+            WHERE user_id=? ORDER BY created_at DESC LIMIT ?
+        """, (user_id, limit)) as cur:
+            return await cur.fetchall()
+
+
+# ── COUPON ────────────────────────────────────────────────────
+async def create_coupon(code, discount_percent, max_uses):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT OR REPLACE INTO coupons (code, discount_percent, max_uses)
+            VALUES (?, ?, ?)
+        """, (code.upper(), discount_percent, max_uses))
+        await db.commit()
+
+
+async def use_coupon(code):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM coupons WHERE code=? AND is_active=1 AND used_count < max_uses
+        """, (code.upper(),)) as cur:
+            coupon = await cur.fetchone()
+        if not coupon:
+            return None
+        await db.execute("UPDATE coupons SET used_count = used_count + 1 WHERE code=?", (code.upper(),))
+        await db.commit()
+        return coupon
+
+
+# ── REFERRAL ──────────────────────────────────────────────────
+async def get_referral_code(user_id):
+    user = await get_user(user_id)
+    return user["referral_code"] if user else None
+
+
+async def process_referral(referrer_code, new_user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT user_id FROM users WHERE referral_code=?", (referrer_code,)) as cur:
+            referrer = await cur.fetchone()
+        if not referrer or referrer["user_id"] == new_user_id:
+            return None
+        referrer_id = referrer["user_id"]
+        # Add 3 bonus voices to referrer
+        await db.execute("""
+            UPDATE subscriptions SET voice_limit = voice_limit + 3
+            WHERE user_id=? AND is_active=1 AND expires_at > datetime('now')
+        """, (referrer_id,))
+        await db.execute("""
+            INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)
+        """, (referrer_id, new_user_id))
+        await db.execute("UPDATE users SET referred_by=? WHERE user_id=?", (referrer_id, new_user_id))
+        await db.commit()
+        return referrer_id
+
+
+# ── PAYMENT ───────────────────────────────────────────────────
 async def save_payment(user_id, method, amount, plan, trx_id):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -147,12 +316,20 @@ async def approve_payment(trx_id):
         return payment
 
 
-async def log_voice(user_id, text_length):
+# ── EXPIRY REMINDER ───────────────────────────────────────────
+async def get_expiring_soon(days=3):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT INTO voice_logs (user_id, text_length) VALUES (?, ?)", (user_id, text_length))
-        await db.commit()
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT s.user_id, s.plan, s.expires_at FROM subscriptions s
+            WHERE s.is_active=1
+            AND s.expires_at > datetime('now')
+            AND s.expires_at < datetime('now', '+{} days')
+        """.format(days)) as cur:
+            return await cur.fetchall()
 
 
+# ── ADMIN STATS ───────────────────────────────────────────────
 async def get_admin_stats():
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
@@ -169,6 +346,9 @@ async def get_admin_stats():
             stats["total_payments"] = (await cur.fetchone())["c"]
         async with db.execute("SELECT COUNT(*) as c FROM payments WHERE status='pending'") as cur:
             stats["pending_payments"] = (await cur.fetchone())["c"]
+        async with db.execute("SELECT SUM(amount) as s FROM payments WHERE status='verified'") as cur:
+            row = await cur.fetchone()
+            stats["total_revenue"] = row["s"] or 0
         return stats
 
 
@@ -195,17 +375,33 @@ async def get_all_users():
             return await cur.fetchall()
 
 
-async def ban_user(user_id):
+async def get_all_user_ids():
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET is_banned=1 WHERE user_id=?", (user_id,))
-        await db.commit()
+        async with db.execute("SELECT user_id FROM users WHERE is_banned=0") as cur:
+            rows = await cur.fetchall()
+            return [r[0] for r in rows]
 
 
-async def unban_user(user_id):
+async def get_sales_report():
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET is_banned=0 WHERE user_id=?", (user_id,))
-        await db.commit()
-
-
-async def give_free_sub(user_id, plan):
-    await create_subscription(user_id, plan)
+        db.row_factory = aiosqlite.Row
+        report = {}
+        async with db.execute("""
+            SELECT plan, COUNT(*) as count, SUM(amount) as total
+            FROM payments WHERE status='verified'
+            GROUP BY plan
+        """) as cur:
+            report["by_plan"] = await cur.fetchall()
+        async with db.execute("""
+            SELECT method, COUNT(*) as count, SUM(amount) as total
+            FROM payments WHERE status='verified'
+            GROUP BY method
+        """) as cur:
+            report["by_method"] = await cur.fetchall()
+        async with db.execute("""
+            SELECT SUM(amount) as total FROM payments
+            WHERE status='verified' AND created_at > datetime('now', '-30 days')
+        """) as cur:
+            row = await cur.fetchone()
+            report["monthly"] = row["total"] or 0
+        return report
