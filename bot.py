@@ -504,6 +504,27 @@ async def payment_action_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await ctx.bot.send_message(user_id, f"🎉 Subscription active!\n✅ {plan['label']}\n🎤 {plan['voice_limit']} voices\n\n🎤 Voice বানান চাপো!")
         except Exception:
             pass
+        # Send invoice
+        if HAS_INVOICE:
+            try:
+                user_info = await ctx.bot.get_chat(user_id)
+                invoice_path = generate_invoice(
+                    user_name=user_info.full_name,
+                    plan_label=plan['label'],
+                    amount=payment['amount'],
+                    method=payment['method'],
+                    trx_id=trx
+                )
+                await ctx.bot.send_document(
+                    chat_id=user_id,
+                    document=open(invoice_path, 'rb'),
+                    filename=f"invoice_{trx}.pdf",
+                    caption="📄 তোমার payment invoice!"
+                )
+                import os
+                os.unlink(invoice_path)
+            except Exception as e:
+                logger.error(f"Invoice error: {e}")
     elif query.data.startswith("reject_"):
         parts = query.data.split("_")
         trx, user_id = parts[1], int(parts[2])
