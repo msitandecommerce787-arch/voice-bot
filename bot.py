@@ -719,6 +719,12 @@ async def menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🎁 Gift feature coming soon!")
 
 
+async def cancel_and_handle(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data.clear()
+    await handle_buttons(update, ctx)
+    return ConversationHandler.END
+
+
 async def handle_buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
@@ -763,7 +769,12 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text),
             ],
         },
-        fallbacks=[CallbackQueryHandler(menu_cb, pattern="^cancel$")],
+        fallbacks=[
+            CallbackQueryHandler(menu_cb, pattern="^cancel$"),
+            CommandHandler("start", start),
+            MessageHandler(filters.Regex("^(💳 Subscribe করুন|📊 আমার Usage|⚙️ Settings|👥 Referral|📜 History|🏆 Leaderboard|👤 Profile|🔄 Reset|🛠 Admin Panel)$"), cancel_and_handle),
+        ],
+        allow_reentry=True,
     )
 
     pay_conv = ConversationHandler(
@@ -784,7 +795,11 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_trx),
             ],
         },
-        fallbacks=[CallbackQueryHandler(menu_cb, pattern="^cancel$")],
+        fallbacks=[
+            CallbackQueryHandler(menu_cb, pattern="^cancel$"),
+            CommandHandler("start", start),
+            MessageHandler(filters.Regex("^🔄 Reset$"), menu_cb),
+        ],
     )
 
     app.add_handler(CommandHandler("start", start))
