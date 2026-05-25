@@ -267,8 +267,11 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         os.unlink(tmp2.name)
 
     except Exception as e:
-        logger.error(e)
-        await msg.edit_text("কিছু একটা ঠিক হয়নি, আবার try করো!")
+        import traceback
+        error_details = traceback.format_exc()
+        logger.error(f"VOICE ERROR: {e}")
+        logger.error(f"TRACEBACK: {error_details}")
+        await msg.edit_text(f"❌ Error: {str(e)[:200]}")
 
     return ConversationHandler.END
 
