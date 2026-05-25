@@ -220,29 +220,15 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         remaining = sub["voice_limit"] - sub["voices_used"]
 
         await msg.delete()
-        await update.message.reply_text(f"✨ {improved}\n🔢 Remaining: {remaining}")
-
-        # Version 1 with rating + download + favorite
         kb1 = InlineKeyboardMarkup([
             [InlineKeyboardButton("⭐1", callback_data=f"rate_{log_id}_1"),
              InlineKeyboardButton("⭐2", callback_data=f"rate_{log_id}_2"),
              InlineKeyboardButton("⭐3", callback_data=f"rate_{log_id}_3"),
              InlineKeyboardButton("⭐4", callback_data=f"rate_{log_id}_4"),
              InlineKeyboardButton("⭐5", callback_data=f"rate_{log_id}_5")],
-            [InlineKeyboardButton(f"⭐ Save {voice_name} as Fav", callback_data=f"fav_{voice_name}")],
+            [InlineKeyboardButton(f"⭐ Fav", callback_data=f"fav_{voice_name}"),
+             InlineKeyboardButton("📥 Download", url=f"https://t.me/{(await ctx.bot.get_me()).username}")],
         ])
-
-        await update.message.reply_voice(
-            voice=open(tmp1.name, "rb"),
-            caption="🎤 Version 1 — Natural\n📥 Download করতে নিচের file টা save করো",
-            reply_markup=kb1
-        )
-        # Send as audio file for download
-        await update.message.reply_audio(
-            audio=open(tmp1.name, "rb"),
-            filename=f"voice1_{voice_name}.mp3",
-            caption="📥 Version 1 Download"
-        )
 
         kb2 = InlineKeyboardMarkup([
             [InlineKeyboardButton("⭐1", callback_data=f"rate_{log_id}_1"),
@@ -252,15 +238,17 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("⭐5", callback_data=f"rate_{log_id}_5")],
         ])
 
-        await update.message.reply_voice(
-            voice=open(tmp2.name, "rb"),
-            caption="🎤 Version 2 — Emotional",
-            reply_markup=kb2
+        await update.message.reply_audio(
+            audio=open(tmp1.name, "rb"),
+            filename=f"voice1_{voice_name}.mp3",
+            caption=f"🎤 Version 1 — Natural\n✨ {improved}\n🔢 Remaining: {remaining}",
+            reply_markup=kb1
         )
         await update.message.reply_audio(
             audio=open(tmp2.name, "rb"),
             filename=f"voice2_{voice_name}.mp3",
-            caption="📥 Version 2 Download"
+            caption="🎤 Version 2 — Emotional",
+            reply_markup=kb2
         )
 
         os.unlink(tmp1.name)
