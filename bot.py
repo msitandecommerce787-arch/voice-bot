@@ -98,17 +98,26 @@ async def improve_text(text):
 
 
 def make_voice(text, voice_id, stability=0.5, similarity=0.75, style=0.0, speed=0.75):
-    audio = eleven.generate(
-        text=text,
-        voice=voice_id,
-        model="eleven_multilingual_v2",
-        voice_settings=VoiceSettings(
+    try:
+        voice_settings = VoiceSettings(
             stability=stability,
             similarity_boost=similarity,
             style=style,
             use_speaker_boost=True,
             speed=speed,
         )
+    except Exception:
+        voice_settings = VoiceSettings(
+            stability=stability,
+            similarity_boost=similarity,
+            style=style,
+            use_speaker_boost=True,
+        )
+    audio = eleven.generate(
+        text=text,
+        voice=voice_id,
+        model="eleven_multilingual_v2",
+        voice_settings=voice_settings,
     )
     return b"".join(audio)
 
