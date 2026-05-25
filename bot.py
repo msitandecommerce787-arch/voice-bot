@@ -226,8 +226,7 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("⭐3", callback_data=f"rate_{log_id}_3"),
              InlineKeyboardButton("⭐4", callback_data=f"rate_{log_id}_4"),
              InlineKeyboardButton("⭐5", callback_data=f"rate_{log_id}_5")],
-            [InlineKeyboardButton(f"⭐ Fav", callback_data=f"fav_{voice_name}"),
-             InlineKeyboardButton("📥 Download", url=f"https://t.me/{(await ctx.bot.get_me()).username}")],
+            [InlineKeyboardButton(f"⭐ Fav", callback_data=f"fav_{voice_name}")],
         ])
 
         kb2 = InlineKeyboardMarkup([
