@@ -237,15 +237,13 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("⭐5", callback_data=f"rate_{log_id}_5")],
         ])
 
-        await update.message.reply_audio(
-            audio=open(tmp1.name, "rb"),
-            filename=f"voice1_{voice_name}.mp3",
+        await update.message.reply_voice(
+            voice=open(tmp1.name, "rb"),
             caption=f"🎤 Version 1 — Natural\n✨ {improved}\n🔢 Remaining: {remaining}",
             reply_markup=kb1
         )
-        await update.message.reply_audio(
-            audio=open(tmp2.name, "rb"),
-            filename=f"voice2_{voice_name}.mp3",
+        await update.message.reply_voice(
+            voice=open(tmp2.name, "rb"),
             caption="🎤 Version 2 — Emotional",
             reply_markup=kb2
         )
