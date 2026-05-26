@@ -205,15 +205,48 @@ async def increment_voice_usage(user_id):
 
 
 async def create_subscription(user_id, plan, bonus=0, gifted_by=None):
+    """
+    Subscription বানায়।
+    ✅ Active subscription থাকলে: remaining voices + নতুন voices add হবে
+    ✅ No subscription: নতুন subscription বানাবে
+    """
     plan_data = PLANS[plan]
+    new_voices = plan_data["voice_limit"] + bonus
     expires = (datetime.utcnow() + timedelta(days=plan_data["days"])).isoformat()
     started = datetime.utcnow().isoformat()
+
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE subscriptions SET is_active=0 WHERE user_id=?", (user_id,))
-        await db.execute("""
-            INSERT INTO subscriptions (user_id, plan, voice_limit, started_at, expires_at, gifted_by)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (user_id, plan, plan_data["voice_limit"] + bonus, started, expires, gifted_by))
+        db.row_factory = aiosqlite.Row
+
+        # Check existing active subscription
+        async with db.execute("""
+            SELECT * FROM subscriptions
+            WHERE user_id=? AND is_active=1 AND expires_at > datetime('now')
+            ORDER BY expires_at DESC LIMIT 1
+        """, (user_id,)) as cur:
+            existing = await cur.fetchone()
+
+        if existing:
+            # Remaining voices carry over + new voices add হবে
+            remaining = existing["voice_limit"] - existing["voices_used"]
+            total_voices = remaining + new_voices
+
+            # পুরনো deactivate করো
+            await db.execute("UPDATE subscriptions SET is_active=0 WHERE user_id=?", (user_id,))
+
+            # নতুন subscription — remaining + new voices
+            await db.execute("""
+                INSERT INTO subscriptions (user_id, plan, voice_limit, voices_used, started_at, expires_at, gifted_by)
+                VALUES (?, ?, ?, 0, ?, ?, ?)
+            """, (user_id, plan, total_voices, started, expires, gifted_by))
+        else:
+            # কোনো active subscription নেই — নতুন বানাও
+            await db.execute("UPDATE subscriptions SET is_active=0 WHERE user_id=?", (user_id,))
+            await db.execute("""
+                INSERT INTO subscriptions (user_id, plan, voice_limit, voices_used, started_at, expires_at, gifted_by)
+                VALUES (?, ?, ?, 0, ?, ?, ?)
+            """, (user_id, plan, new_voices, started, expires, gifted_by))
+
         await db.commit()
 
 
@@ -527,7 +560,7 @@ async def update_streak(user_id):
             last = row["last_used"]
             yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
             if last == today:
-                pass  # Already used today
+                pass
             elif last == yesterday:
                 new_streak = row["current_streak"] + 1
                 max_s = max(new_streak, row["max_streak"])
