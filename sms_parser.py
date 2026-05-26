@@ -150,6 +150,16 @@ async def sms_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     logger.info(f"SMS received from {sender}: {message[:100]}")
 
+    # Security: শুধু bKash ও Nagad থেকে accept করো
+    ALLOWED_SENDERS = ['bkash', 'nagad']
+    if not any(x in sender.lower() for x in ALLOWED_SENDERS):
+        await update.message.reply_text(
+            f"❌ Unknown sender rejected!\n"
+            f"Sender: {sender}\n\n"
+            f"শুধু bKash ও Nagad SMS accept হবে।"
+        )
+        return
+
     # Parse SMS
     parsed = parse_sms(sender, message)
 
