@@ -1,12 +1,3 @@
-"""
-bot.py — Updated with SMS Auto Payment Verification
-====================================================
-Changes:
-  1. sms_parser import করা হয়েছে
-  2. /sms ও /smslist command add করা হয়েছে
-  3. বাকি সব আগের মতোই আছে
-"""
-
 import os
 import logging
 import tempfile
@@ -21,7 +12,7 @@ from telegram.ext import (
 )
 import database as db
 from scheduler import start_scheduler
-from sms_parser import sms_handler, sms_list_handler  # ← NEW
+from sms_parser import sms_handler, sms_list_handler
 
 try:
     from invoice import generate_invoice
@@ -126,6 +117,15 @@ def make_voice(text, voice_id, stability=0.5, similarity=0.75, style=0.0, speed=
         voice_settings=voice_settings,
     )
     return b"".join(audio)
+
+# ── RESET HANDLER (Global) ────────────────────────────────────
+async def reset_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """সবসময় কাজ করবে — conversation এর মধ্যেও"""
+    user_id = update.effective_user.id
+    ctx.user_data.clear()
+    kb = admin_keyboard() if user_id == ADMIN_ID else main_keyboard()
+    await update.message.reply_text("🔄 Reset!", reply_markup=kb)
+    return ConversationHandler.END
 
 # ── /start ─────────────────────────────────────────────────────
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -521,7 +521,7 @@ async def admin_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("🔔 Expiry",     callback_data="adm_expiry")],
         [InlineKeyboardButton("😴 Inactive",   callback_data="adm_inactive"),
          InlineKeyboardButton("🤝 Reseller",   callback_data="adm_reseller")],
-        [InlineKeyboardButton("📱 SMS Setup",  callback_data="adm_smssetup")],  # ← NEW
+        [InlineKeyboardButton("📱 SMS Setup",  callback_data="adm_smssetup")],
     ])
     await update.message.reply_text(
         f"🛠 Admin Panel\n\n"
@@ -624,7 +624,7 @@ async def admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("✅ Unban করতে User ID লেখো:")
         ctx.user_data["admin_action"] = "unban"
 
-    elif query.data == "adm_smssetup":  # ← NEW
+    elif query.data == "adm_smssetup":
         await query.edit_message_text(
             "📱 SMS Auto-Verify Setup\n\n"
             "Android phone এ MacroDroid install করো:\n"
@@ -697,21 +697,8 @@ async def sms_help_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "Step 2: নতুন Macro বানাও:\n"
         "  • TRIGGER → SMS Received\n"
-        "  • Content Filter: bKash OR Nagad OR BANK\n\n"
-        "Step 3: ACTION → HTTP Request\n"
-        "  Method: POST\n"
-        f"  URL: https://api.telegram.org/bot{BOT_TOKEN[:10]}***/sendMessage\n"
-        "  Body:\n"
-        "  {\n"
-        '    "chat_id": "YOUR_CHAT_ID",\n'
-        '    "text": "/sms [sender] [message]"\n'
-        "  }\n\n"
-        "  [sender] = {sms_sender_address}\n"
-        "  [message] = {sms_message_body}\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "Test করো:\n"
-        "/sms bKash Tk 200.00 received from 01712345678 TrxID AB1234567\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "  • Content Filter: TrxID OR TxnID\n\n"
+        "Step 3: ACTION → HTTP Request POST\n\n"
         "Pending list দেখো: /smslist",
         parse_mode=None
     )
@@ -759,6 +746,9 @@ async def post_init(app):
 def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
+    # ── Reset handler — সবার আগে register করো (সবসময় কাজ করবে)
+    reset_filter = filters.Regex("^🔄 Reset$")
+
     voice_conv = ConversationHandler(
         entry_points=[
             CommandHandler("voice", voice_command),
@@ -767,13 +757,14 @@ def main():
         states={
             WAIT_TEXT: [
                 CallbackQueryHandler(voice_selected, pattern="^sv_"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~reset_filter, receive_text),
             ],
         },
         fallbacks=[
+            MessageHandler(reset_filter, reset_handler),  # ← Reset সবসময় কাজ করবে
             CallbackQueryHandler(menu_cb, pattern="^cancel$"),
             CommandHandler("start", start),
-            MessageHandler(filters.Regex("^(💳 Subscribe করুন|📊 আমার Usage|⚙️ Settings|👥 Referral|📜 History|🏆 Leaderboard|👤 Profile|🔄 Reset|🛠 Admin Panel)$"), cancel_and_handle),
+            MessageHandler(filters.Regex("^(💳 Subscribe করুন|📊 আমার Usage|⚙️ Settings|👥 Referral|📜 History|🏆 Leaderboard|👤 Profile|🛠 Admin Panel)$"), cancel_and_handle),
         ],
         allow_reentry=True,
     )
@@ -789,29 +780,26 @@ def main():
                 CallbackQueryHandler(coupon_prompt, pattern="^use_coupon$"),
             ],
             WAIT_COUPON: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_coupon),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~reset_filter, receive_coupon),
             ],
             WAIT_TRX: [
                 CallbackQueryHandler(method_selected, pattern="^pm_"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_trx),
+                MessageHandler(filters.TEXT & ~filters.COMMAND & ~reset_filter, receive_trx),
             ],
         },
         fallbacks=[
+            MessageHandler(reset_filter, reset_handler),  # ← Reset সবসময় কাজ করবে
             CallbackQueryHandler(menu_cb, pattern="^cancel$"),
             CommandHandler("start", start),
-            MessageHandler(filters.Regex("^🔄 Reset$"), menu_cb),
         ],
     )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("mystats", mystats))
-
-    # ── SMS Auto-Verify handlers (NEW) ──────────────────────────
     app.add_handler(CommandHandler("sms", sms_handler))
     app.add_handler(CommandHandler("smslist", sms_list_handler))
     app.add_handler(CommandHandler("smshelp", sms_help_command))
-    # ────────────────────────────────────────────────────────────
 
     app.add_handler(voice_conv)
     app.add_handler(pay_conv)
@@ -823,7 +811,7 @@ def main():
     app.add_handler(CallbackQueryHandler(menu_cb, pattern="^cancel$|^gift_sub$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
 
-    logger.info("✅ Bot started with SMS Auto-Verify!")
+    logger.info("✅ Bot started!")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
