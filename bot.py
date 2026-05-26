@@ -719,6 +719,17 @@ async def cancel_and_handle(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def handle_buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
+    # MacroDroid থেকে plain text /sms message handle করো
+    if text and text.startswith("/sms ") and user_id == ADMIN_ID:
+        rest = text[5:].strip()
+        parts = rest.split(" ", 1)
+        if len(parts) >= 2:
+            ctx.args = [parts[0]] + parts[1].split()
+        else:
+            ctx.args = parts
+        await sms_handler(update, ctx)
+        return
+
     if text == "📊 আমার Usage":
         await mystats(update, ctx)
     elif text == "⚙️ Settings":
