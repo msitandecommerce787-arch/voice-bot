@@ -29,28 +29,24 @@ logger = logging.getLogger(__name__)
 # "Tk 200.00 has been credited to your bKash account from 01712XXXXXX TrxID AB12345678"
 
 BKASH_PATTERNS = [
-    # "received Tk 200.00 ... TrxID AB1234"
-    r'received\s+Tk\s+([\d,]+\.?\d*).+?(?:Ref|TrxID|trxId)\s*([A-Z0-9]+)',
-    # "Tk 200.00 has been credited ... TrxID"
-    r'Tk\s+([\d,]+\.?\d*)\s+has been credited.+?(?:TrxID|Ref)\s*([A-Z0-9]+)',
-    # General bKash
-    r'(?:Tk|BDT)\s*([\d,]+\.?\d*).*?(?:TrxID|Ref|Reference)\s*:?\s*([A-Z0-9]{8,})',
+    # Real bKash: "You have received Tk 1,000.00 from 01608707400. Fee Tk 0.00. Balance Tk 1,032.17. TrxID DEH4BLD432"
+    r'received\s+Tk\s+([\d,]+\.?\d*).*?TrxID\s+([A-Z0-9]+)',
+    # Other bKash formats
+    r'Tk\s+([\d,]+\.?\d*)\s+has been credited.*?TrxID\s+([A-Z0-9]+)',
+    r'(?:Tk|BDT)\s*([\d,]+\.?\d*).*?TrxID\s*:?\s*([A-Z0-9]{6,})',
 ]
 
 NAGAD_PATTERNS = [
-    # "Nagad-er maddome 200.00 Tk ... Ref: NA12345"
-    r'(?:Nagad|NAGAD).+?([\d,]+\.?\d*)\s*(?:Tk|BDT|taka).+?(?:Ref|Reference|TrxID)\s*:?\s*([A-Z0-9]+)',
-    # "আপনার Nagad একাউন্টে 200.00 Tk জমা হয়েছে"
-    r'([\d,]+\.?\d*)\s*(?:Tk|টাকা).+?(?:Ref|Reference)\s*:?\s*([A-Z0-9]+)',
-    # Simple amount + ref
-    r'(?:credited|received|joma).+?([\d,]+\.?\d*).+?([A-Z0-9]{6,})',
+    # Real Nagad: "Money Received.\nAmount: Tk 50.00\nSender: 01866787251\nRef: N/A\nTxnID: 75FF5UT5"
+    r'Amount:\s*Tk\s*([\d,]+\.?\d*).*?TxnID:\s*([A-Z0-9]+)',
+    # Other Nagad formats
+    r'Tk\s*([\d,]+\.?\d*).*?TxnID:\s*([A-Z0-9]+)',
+    r'Amount.*?([\d,]+\.?\d*).*?TxnID\s*:?\s*([A-Z0-9]+)',
 ]
 
 BANK_PATTERNS = [
-    # "BDT 1000.00 has been debited/credited ... TxnId: 65613702"
-    r'BDT\s*([\d,]+\.?\d*).+?(?:TxnId|TxId|Ref)\s*:?\s*([A-Z0-9]+)',
-    # Generic bank
-    r'(?:credited|received)\s+(?:BDT|Tk|TK)\s*([\d,]+\.?\d*).+?(?:Ref|TxnId|TrxId)\s*:?\s*([A-Z0-9]+)',
+    r'BDT\s*([\d,]+\.?\d*).+?(?:TxnId|TxID|TrxID)\s*:?\s*([A-Z0-9]+)',
+    r'(?:credited|received)\s+(?:BDT|Tk)\s*([\d,]+\.?\d*).+?(?:TxnId|TrxID)\s*:?\s*([A-Z0-9]+)',
 ]
 
 
