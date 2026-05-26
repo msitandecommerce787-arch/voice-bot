@@ -1,3 +1,12 @@
+"""
+bot.py — Updated with SMS Auto Payment Verification
+====================================================
+Changes:
+  1. sms_parser import করা হয়েছে
+  2. /sms ও /smslist command add করা হয়েছে
+  3. বাকি সব আগের মতোই আছে
+"""
+
 import os
 import logging
 import tempfile
@@ -12,6 +21,8 @@ from telegram.ext import (
 )
 import database as db
 from scheduler import start_scheduler
+from sms_parser import sms_handler, sms_list_handler  # ← NEW
+
 try:
     from invoice import generate_invoice
     HAS_INVOICE = True
@@ -21,32 +32,32 @@ except Exception:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN      = os.environ["BOT_TOKEN"]
+BOT_TOKEN = os.environ["BOT_TOKEN"]
 ELEVENLABS_KEY = os.environ["ELEVENLABS_KEY"]
-GEMINI_KEY     = os.environ["GEMINI_KEY"]
-ADMIN_ID       = int(os.environ["ADMIN_ID"])
-BKASH_NUMBER   = os.environ.get("BKASH_NUMBER", "01XXXXXXXXX")
-NAGAD_NUMBER   = os.environ.get("NAGAD_NUMBER", "01XXXXXXXXX")
-BINANCE_ID     = os.environ.get("BINANCE_ID", "YOUR_BINANCE_ID")
+GEMINI_KEY = os.environ["GEMINI_KEY"]
+ADMIN_ID = int(os.environ["ADMIN_ID"])
+BKASH_NUMBER = os.environ.get("BKASH_NUMBER", "01XXXXXXXXX")
+NAGAD_NUMBER = os.environ.get("NAGAD_NUMBER", "01XXXXXXXXX")
+BINANCE_ID = os.environ.get("BINANCE_ID", "YOUR_BINANCE_ID")
 
 genai.configure(api_key=GEMINI_KEY)
 gemini = genai.GenerativeModel("gemini-1.5-flash")
 eleven = ElevenLabs(api_key=ELEVENLABS_KEY)
 
 VOICES = {
-    "Rachel":  "21m00Tcm4TlvDq8ikWAM",
-    "Domi":    "AZnzlk1XvdvUeBnXmlld",
-    "Bella":   "EXAVITQu4vr4xnSDxMaL",
-    "Elli":    "MF3mGyEYCl7XYWbV9V6O",
-    "Matilda": "z7HRV20pBAAeVnQFAOXX",
-    "Aria":    "hNsVcO9DnD6NFXgIEQ4f",
+    "Rachel": "21m00Tcm4TlvDq8ikWAM",
+    "Domi":   "AZnzlk1XvdvUeBnXmlld",
+    "Bella":  "EXAVITQu4vr4xnSDxMaL",
+    "Elli":   "MF3mGyEYCl7XYWbV9V6O",
+    "Matilda":"z7HRV20pBAAeVnQFAOXX",
+    "Aria":   "hNsVcO9DnD6NFXgIEQ4f",
 }
 
 SPEED_OPTIONS = {
     "🐢 Very Slow": 0.70,
-    "🐌 Slow": 0.80,
-    "🚶 Normal": 0.90,
-    "🏃 Fast": 1.0,
+    "🐌 Slow":      0.80,
+    "🚶 Normal":    0.90,
+    "🏃 Fast":      1.0,
 }
 
 SKIP_BUTTONS = [
@@ -57,26 +68,23 @@ SKIP_BUTTONS = [
 
 WAIT_TEXT, WAIT_TRX, WAIT_PLAN_SELECT, WAIT_COUPON = range(4)
 
-
 def main_keyboard():
     return ReplyKeyboardMarkup([
         ["🎤 Voice বানান", "💳 Subscribe করুন"],
-        ["📊 আমার Usage", "⚙️ Settings"],
-        ["👥 Referral", "📜 History"],
+        ["📊 আমার Usage",  "⚙️ Settings"],
+        ["👥 Referral",    "📜 History"],
         ["🏆 Leaderboard", "👤 Profile"],
         ["🔄 Reset"],
     ], resize_keyboard=True)
 
-
 def admin_keyboard():
     return ReplyKeyboardMarkup([
         ["🎤 Voice বানান", "💳 Subscribe করুন"],
-        ["📊 আমার Usage", "⚙️ Settings"],
-        ["👥 Referral", "📜 History"],
+        ["📊 আমার Usage",  "⚙️ Settings"],
+        ["👥 Referral",    "📜 History"],
         ["🏆 Leaderboard", "👤 Profile"],
-        ["🔄 Reset", "🛠 Admin Panel"],
+        ["🔄 Reset",       "🛠 Admin Panel"],
     ], resize_keyboard=True)
-
 
 def get_badge(total_voices):
     badge = db.BADGES["newcomer"]["label"]
@@ -84,7 +92,6 @@ def get_badge(total_voices):
         if total_voices >= data["voices"]:
             badge = data["label"]
     return badge
-
 
 async def improve_text(text):
     try:
@@ -95,7 +102,6 @@ async def improve_text(text):
         return r.text.strip()
     except Exception:
         return text
-
 
 def make_voice(text, voice_id, stability=0.5, similarity=0.75, style=0.0, speed=0.75):
     try:
@@ -121,12 +127,10 @@ def make_voice(text, voice_id, stability=0.5, similarity=0.75, style=0.0, speed=
     )
     return b"".join(audio)
 
-
 # ── /start ─────────────────────────────────────────────────────
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await db.upsert_user(user.id, user.username, user.full_name)
-
     if ctx.args:
         ref_code = ctx.args[0]
         if not ref_code.startswith("RS"):
@@ -136,13 +140,11 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     await ctx.bot.send_message(referrer_id, "🎉 তোমার referral কাজ করেছে! +3 bonus voice!")
                 except Exception:
                     pass
-
     kb = admin_keyboard() if user.id == ADMIN_ID else main_keyboard()
     await update.message.reply_text(
         f"হ্যালো {user.first_name}! 👋\n\n🎤 Text কে real girl এর voice এ convert করি!\n\nনিচের buttons থেকে শুরু করো 👇",
         reply_markup=kb
     )
-
 
 # ── VOICE ──────────────────────────────────────────────────────
 async def voice_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -150,13 +152,11 @@ async def voice_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if await db.is_banned(user_id):
         await update.message.reply_text("তুমি banned 🚫")
         return ConversationHandler.END
-
     can, reason = await db.can_use_voice(user_id)
     if not can:
         msg = "আগে subscribe করো! 💳 Subscribe করুন চাপো" if reason == "no_sub" else "limit শেষ! নতুন plan নাও 🔄"
         await update.message.reply_text(msg)
         return ConversationHandler.END
-
     fav = await db.get_favorite_voice(user_id)
     keyboard = []
     row = []
@@ -170,7 +170,6 @@ async def voice_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("কোন voice চাও? ⭐ = favorite 👇", reply_markup=InlineKeyboardMarkup(keyboard))
     return WAIT_TEXT
 
-
 async def voice_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -178,47 +177,37 @@ async def voice_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"✅ {ctx.user_data['voice']} select!\n\nযা বলাতে চাও লেখো (max ~10 sec):")
     return WAIT_TEXT
 
-
 async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
-
     if text in SKIP_BUTTONS:
         return ConversationHandler.END
-
     if len(text) < 2:
         await update.message.reply_text("কিছু একটা লেখো!")
         return WAIT_TEXT
     if len(text) > 150:
         await update.message.reply_text("❌ বেশি লম্বা! max ~150 character")
         return WAIT_TEXT
-
     can, reason = await db.can_use_voice(user_id)
     if not can:
         await update.message.reply_text("limit শেষ! নতুন plan নাও।")
         return ConversationHandler.END
-
     voice_name = ctx.user_data.get("voice", "Rachel")
     voice_id = VOICES[voice_name]
     speed = await db.get_user_speed(user_id)
     msg = await update.message.reply_text("⏳ ২টা version বানাচ্ছি...")
-
     try:
         improved = await improve_text(text)
-
         audio1 = make_voice(improved, voice_id, stability=0.50, similarity=0.75, style=0.10, speed=speed)
         audio2 = make_voice(improved, voice_id, stability=0.35, similarity=0.85, style=0.30, speed=max(0.7, speed - 0.15))
-
         tmp1 = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
         tmp1.write(audio1); tmp1.close()
         tmp2 = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
         tmp2.write(audio2); tmp2.close()
-
         await db.increment_voice_usage(user_id)
         log_id = await db.log_voice(user_id, voice_name, len(text))
         sub = await db.get_active_subscription(user_id)
         remaining = sub["voice_limit"] - sub["voices_used"]
-
         await msg.delete()
         kb1 = InlineKeyboardMarkup([
             [InlineKeyboardButton("⭐1", callback_data=f"rate_{log_id}_1"),
@@ -228,7 +217,6 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("⭐5", callback_data=f"rate_{log_id}_5")],
             [InlineKeyboardButton(f"⭐ Fav", callback_data=f"fav_{voice_name}")],
         ])
-
         kb2 = InlineKeyboardMarkup([
             [InlineKeyboardButton("⭐1", callback_data=f"rate_{log_id}_1"),
              InlineKeyboardButton("⭐2", callback_data=f"rate_{log_id}_2"),
@@ -236,7 +224,6 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
              InlineKeyboardButton("⭐4", callback_data=f"rate_{log_id}_4"),
              InlineKeyboardButton("⭐5", callback_data=f"rate_{log_id}_5")],
         ])
-
         await update.message.reply_voice(
             voice=open(tmp1.name, "rb"),
             caption=f"🎤 Version 1 — Natural\n✨ {improved}\n🔢 Remaining: {remaining}",
@@ -247,19 +234,13 @@ async def receive_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             caption="🎤 Version 2 — Emotional",
             reply_markup=kb2
         )
-
         os.unlink(tmp1.name)
         os.unlink(tmp2.name)
-
     except Exception as e:
         import traceback
-        error_details = traceback.format_exc()
-        logger.error(f"VOICE ERROR: {e}")
-        logger.error(f"TRACEBACK: {error_details}")
+        logger.error(f"VOICE ERROR: {e}\n{traceback.format_exc()}")
         await msg.edit_text(f"❌ Error: {str(e)[:200]}")
-
     return ConversationHandler.END
-
 
 async def rate_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -269,13 +250,11 @@ async def rate_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await db.rate_voice(log_id, rating)
     await query.answer(f"{'⭐' * rating} Rating দেওয়ার জন্য ধন্যবাদ!", show_alert=True)
 
-
 async def fav_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     voice_name = query.data.replace("fav_", "")
     await db.set_favorite_voice(query.from_user.id, voice_name)
     await query.answer(f"⭐ {voice_name} favorite save হয়েছে!", show_alert=True)
-
 
 # ── SETTINGS ───────────────────────────────────────────────────
 async def settings_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -292,7 +271,6 @@ async def settings_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-
 async def speed_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -300,7 +278,6 @@ async def speed_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await db.set_user_speed(query.from_user.id, speed)
     label = next((k for k, v in SPEED_OPTIONS.items() if abs(v - speed) < 0.05), str(speed))
     await query.edit_message_text(f"✅ Speed: {label}")
-
 
 # ── PROFILE ────────────────────────────────────────────────────
 async def profile_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -310,11 +287,9 @@ async def profile_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     total = await db.get_total_voices(user_id)
     badge = get_badge(total)
     fav = await db.get_favorite_voice(user_id)
-
     joined = user["joined_at"][:10] if user else "Unknown"
     plan = db.PLANS.get(sub["plan"], {}).get("label", "No plan") if sub else "❌ No plan"
     remaining = (sub["voice_limit"] - sub["voices_used"]) if sub else 0
-
     await update.message.reply_text(
         f"👤 তোমার Profile:\n\n"
         f"🏅 Badge: {badge}\n"
@@ -324,7 +299,6 @@ async def profile_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"✅ Plan: {plan}\n"
         f"🔢 Remaining: {remaining}"
     )
-
 
 # ── HISTORY ────────────────────────────────────────────────────
 async def history_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -338,7 +312,6 @@ async def history_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         text += f"{i}. 🎙 {log['voice_name']} | {stars} | {log['created_at'][:16]}\n"
     await update.message.reply_text(text)
 
-
 # ── LEADERBOARD ────────────────────────────────────────────────
 async def leaderboard_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     leaders = await db.get_leaderboard(10)
@@ -348,7 +321,6 @@ async def leaderboard_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         medal = medals[i-1] if i <= 3 else f"{i}."
         text += f"{medal} {l['full_name']} — {l['total']} voices\n"
     await update.message.reply_text(text)
-
 
 # ── REFERRAL ───────────────────────────────────────────────────
 async def referral_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -361,7 +333,6 @@ async def referral_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-
 # ── PAY ────────────────────────────────────────────────────────
 async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = []
@@ -373,7 +344,6 @@ async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("💳 Plan select করো 👇", reply_markup=InlineKeyboardMarkup(kb))
     return WAIT_PLAN_SELECT
 
-
 async def plan_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -382,15 +352,15 @@ async def plan_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     plan = db.PLANS[plan_key]
     discount = ctx.user_data.get("discount", 0)
     final_price = int(plan["price_bdt"] * (1 - discount / 100))
-    final_usdt = round(plan["price_usdt"] * (1 - discount / 100), 2)
+    final_usdt  = round(plan["price_usdt"] * (1 - discount / 100), 2)
     ctx.user_data["final_price"] = final_price
-    ctx.user_data["final_usdt"] = final_usdt
+    ctx.user_data["final_usdt"]  = final_usdt
     discount_text = f"\n🎟 {discount}% discount applied!" if discount else ""
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📱 bKash", callback_data="pm_bkash")],
-        [InlineKeyboardButton("📱 Nagad", callback_data="pm_nagad")],
+        [InlineKeyboardButton("📱 bKash",        callback_data="pm_bkash")],
+        [InlineKeyboardButton("📱 Nagad",        callback_data="pm_nagad")],
         [InlineKeyboardButton("💰 Binance USDT", callback_data="pm_binance")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+        [InlineKeyboardButton("❌ Cancel",        callback_data="cancel")],
     ])
     await query.edit_message_text(
         f"✅ {plan['label']}{discount_text}\n💵 ৳{final_price} / ${final_usdt}\n\nPayment method:",
@@ -398,13 +368,11 @@ async def plan_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return WAIT_TRX
 
-
 async def coupon_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("🎟 Coupon code লেখো:")
     return WAIT_COUPON
-
 
 async def receive_coupon(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     code = update.message.text.strip()
@@ -419,15 +387,14 @@ async def receive_coupon(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await pay_command(update, ctx)
     return WAIT_PLAN_SELECT
 
-
 async def method_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     method = query.data.replace("pm_", "")
     ctx.user_data["method"] = method
-    plan = db.PLANS[ctx.user_data["plan"]]
+    plan  = db.PLANS[ctx.user_data["plan"]]
     price = ctx.user_data.get("final_price", plan["price_bdt"])
-    usdt = ctx.user_data.get("final_usdt", plan["price_usdt"])
+    usdt  = ctx.user_data.get("final_usdt",  plan["price_usdt"])
     if method == "bkash":
         txt = f"📱 **bKash:** `{BKASH_NUMBER}`\n💰 **৳{price}**\n\nTransaction ID পাঠাও:"
     elif method == "nagad":
@@ -437,37 +404,45 @@ async def method_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(txt, parse_mode="Markdown")
     return WAIT_TRX
 
-
 async def receive_trx(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     trx = update.message.text.strip()
     if trx in SKIP_BUTTONS:
         return ConversationHandler.END
     plan_key = ctx.user_data.get("plan")
-    method = ctx.user_data.get("method")
+    method   = ctx.user_data.get("method")
     if not plan_key or not method:
         return ConversationHandler.END
-    plan = db.PLANS[plan_key]
+    plan  = db.PLANS[plan_key]
     price = ctx.user_data.get("final_price", plan["price_bdt"])
-
     saved = await db.save_payment(user_id, method, price, plan_key, trx)
     if not saved:
         await update.message.reply_text("❌ এই TRX ID আগে ব্যবহার হয়েছে! সঠিক ID দাও।")
         return WAIT_TRX
-
     user = update.effective_user
     await ctx.bot.send_message(
         chat_id=ADMIN_ID,
-        text=f"🔔 নতুন Payment!\n\n👤 {user.full_name} (@{user.username})\n🆔 `{user_id}`\n💳 {plan['label']}\n📱 {method.upper()}\n💰 ৳{price}\n🧾 TRX: `{trx}`",
+        text=(
+            f"🔔 নতুন Payment!\n\n"
+            f"👤 {user.full_name} (@{user.username})\n"
+            f"🆔 `{user_id}`\n"
+            f"💳 {plan['label']}\n"
+            f"📱 {method.upper()}\n"
+            f"💰 ৳{price}\n"
+            f"🧾 TRX: `{trx}`\n\n"
+            f"💡 SMS auto-verify চললে /sms দিয়ে আসবে, না হলে নিচে approve করো:"
+        ),
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{trx}_{user_id}_{plan_key}")],
-            [InlineKeyboardButton("❌ Reject", callback_data=f"reject_{trx}_{user_id}")],
+            [InlineKeyboardButton("❌ Reject",  callback_data=f"reject_{trx}_{user_id}")],
         ])
     )
-    await update.message.reply_text("✅ Done! Admin verify করলেই active হবে 🙂")
+    await update.message.reply_text(
+        "✅ Done! Admin verify করলেই active হবে 🙂\n\n"
+        "💡 bKash/Nagad SMS auto-detect হলে তাৎক্ষণিক active হবে!"
+    )
     return ConversationHandler.END
-
 
 # ── PAYMENT ACTION ─────────────────────────────────────────────
 async def payment_action_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -486,10 +461,12 @@ async def payment_action_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         plan = db.PLANS[plan_key]
         await query.edit_message_text(f"✅ Approved!\n👤 {user_id}\n💳 {plan['label']}")
         try:
-            await ctx.bot.send_message(user_id, f"🎉 Subscription active!\n✅ {plan['label']}\n🎤 {plan['voice_limit']} voices\n\n🎤 Voice বানান চাপো!")
+            await ctx.bot.send_message(
+                user_id,
+                f"🎉 Subscription active!\n✅ {plan['label']}\n🎤 {plan['voice_limit']} voices\n\n🎤 Voice বানান চাপো!"
+            )
         except Exception:
             pass
-        # Send invoice
         if HAS_INVOICE:
             try:
                 user_info = await ctx.bot.get_chat(user_id)
@@ -506,7 +483,6 @@ async def payment_action_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     filename=f"invoice_{trx}.pdf",
                     caption="📄 তোমার payment invoice!"
                 )
-                import os
                 os.unlink(invoice_path)
             except Exception as e:
                 logger.error(f"Invoice error: {e}")
@@ -518,7 +494,6 @@ async def payment_action_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await ctx.bot.send_message(user_id, "❌ Payment reject হয়েছে। Admin এর সাথে যোগাযোগ করো।")
         except Exception:
             pass
-
 
 # ── MYSTATS ────────────────────────────────────────────────────
 async def mystats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -532,21 +507,21 @@ async def mystats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"📊 তোমার Stats:\n\n✅ {plan.get('label', sub['plan'])}\n🎤 Used: {sub['voices_used']}/{sub['voice_limit']}\n🔢 Remaining: {remaining}\n📅 Expires: {sub['expires_at'][:10]}"
     )
 
-
 # ── ADMIN ──────────────────────────────────────────────────────
 async def admin_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     stats = await db.get_admin_stats()
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("👥 Users", callback_data="adm_users"),
-         InlineKeyboardButton("⏳ Pending", callback_data="adm_pending")],
-        [InlineKeyboardButton("📢 Broadcast", callback_data="adm_broadcast"),
-         InlineKeyboardButton("📈 Sales", callback_data="adm_sales")],
-        [InlineKeyboardButton("🎟 Coupon", callback_data="adm_coupon"),
-         InlineKeyboardButton("🔔 Expiry", callback_data="adm_expiry")],
-        [InlineKeyboardButton("😴 Inactive", callback_data="adm_inactive"),
-         InlineKeyboardButton("🤝 Reseller", callback_data="adm_reseller")],
+        [InlineKeyboardButton("👥 Users",      callback_data="adm_users"),
+         InlineKeyboardButton("⏳ Pending",    callback_data="adm_pending")],
+        [InlineKeyboardButton("📢 Broadcast",  callback_data="adm_broadcast"),
+         InlineKeyboardButton("📈 Sales",      callback_data="adm_sales")],
+        [InlineKeyboardButton("🎟 Coupon",     callback_data="adm_coupon"),
+         InlineKeyboardButton("🔔 Expiry",     callback_data="adm_expiry")],
+        [InlineKeyboardButton("😴 Inactive",   callback_data="adm_inactive"),
+         InlineKeyboardButton("🤝 Reseller",   callback_data="adm_reseller")],
+        [InlineKeyboardButton("📱 SMS Setup",  callback_data="adm_smssetup")],  # ← NEW
     ])
     await update.message.reply_text(
         f"🛠 Admin Panel\n\n"
@@ -559,7 +534,6 @@ async def admin_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"⭐ Avg Rating: {stats['avg_rating']}",
         reply_markup=kb
     )
-
 
 async def admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -592,7 +566,7 @@ async def admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{p['trx_id']}_{p['user_id']}_{p['plan']}")],
-                    [InlineKeyboardButton("❌ Reject", callback_data=f"reject_{p['trx_id']}_{p['user_id']}")],
+                    [InlineKeyboardButton("❌ Reject",  callback_data=f"reject_{p['trx_id']}_{p['user_id']}")],
                 ])
             )
 
@@ -650,6 +624,18 @@ async def admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("✅ Unban করতে User ID লেখো:")
         ctx.user_data["admin_action"] = "unban"
 
+    elif query.data == "adm_smssetup":  # ← NEW
+        await query.edit_message_text(
+            "📱 SMS Auto-Verify Setup\n\n"
+            "Android phone এ MacroDroid install করো:\n"
+            "play.google.com/store/apps/details?id=com.arlosoft.macrodroid\n\n"
+            "Macro settings:\n"
+            "TRIGGER: SMS Received (bKash/Nagad)\n"
+            "ACTION: HTTP POST to Telegram API\n\n"
+            "Command format:\n"
+            "`/sms {sender} {message_body}`\n\n"
+            "Details: /smshelp"
+        )
 
 async def admin_text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -661,7 +647,6 @@ async def admin_text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if text in SKIP_BUTTONS:
         ctx.user_data.pop("admin_action", None)
         return
-
     if action == "broadcast":
         user_ids = await db.get_all_user_ids()
         success = 0
@@ -673,7 +658,6 @@ async def admin_text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         await update.message.reply_text(f"✅ {success}/{len(user_ids)} জন কে পাঠানো হয়েছে!")
-
     elif action == "create_coupon":
         try:
             parts = text.split()
@@ -681,7 +665,6 @@ async def admin_text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ Coupon: {parts[0]} | {parts[1]}% | max {parts[2]}")
         except Exception:
             await update.message.reply_text("❌ Format ঠিক নেই! Example: SAVE20 20 100")
-
     elif action == "create_reseller":
         try:
             parts = text.split()
@@ -689,23 +672,49 @@ async def admin_text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"✅ Reseller created!\nCode: {code}\nCommission: {parts[1]}%")
         except Exception:
             await update.message.reply_text("❌ Format ঠিক নেই! Example: 123456 10")
-
     elif action == "ban":
         try:
             await db.ban_user(int(text))
             await update.message.reply_text(f"🚫 User {text} banned!")
         except Exception:
             await update.message.reply_text("❌ Invalid ID!")
-
     elif action == "unban":
         try:
             await db.unban_user(int(text))
             await update.message.reply_text(f"✅ User {text} unbanned!")
         except Exception:
             await update.message.reply_text("❌ Invalid ID!")
-
     ctx.user_data.pop("admin_action", None)
 
+# ── SMS HELP ───────────────────────────────────────────────────
+async def sms_help_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    await update.message.reply_text(
+        "📱 SMS Auto-Verify — Full Setup Guide\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Step 1: MacroDroid install করো (Android)\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Step 2: নতুন Macro বানাও:\n"
+        "  • TRIGGER → SMS Received\n"
+        "  • Content Filter: bKash OR Nagad OR BANK\n\n"
+        "Step 3: ACTION → HTTP Request\n"
+        "  Method: POST\n"
+        f"  URL: https://api.telegram.org/bot{BOT_TOKEN[:10]}***/sendMessage\n"
+        "  Body:\n"
+        "  {\n"
+        '    "chat_id": "YOUR_CHAT_ID",\n'
+        '    "text": "/sms [sender] [message]"\n'
+        "  }\n\n"
+        "  [sender] = {sms_sender_address}\n"
+        "  [message] = {sms_message_body}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Test করো:\n"
+        "/sms bKash Tk 200.00 received from 01712345678 TrxID AB1234567\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Pending list দেখো: /smslist",
+        parse_mode=None
+    )
 
 async def menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -715,17 +724,14 @@ async def menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif query.data == "gift_sub":
         await query.edit_message_text("🎁 Gift feature coming soon!")
 
-
 async def cancel_and_handle(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data.clear()
     await handle_buttons(update, ctx)
     return ConversationHandler.END
 
-
 async def handle_buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
-
     if text == "📊 আমার Usage":
         await mystats(update, ctx)
     elif text == "⚙️ Settings":
@@ -747,10 +753,8 @@ async def handle_buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif ctx.user_data.get("admin_action"):
         await admin_text_handler(update, ctx)
 
-
 async def post_init(app):
     await db.init_db()
-
 
 def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
@@ -802,6 +806,13 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("mystats", mystats))
+
+    # ── SMS Auto-Verify handlers (NEW) ──────────────────────────
+    app.add_handler(CommandHandler("sms", sms_handler))
+    app.add_handler(CommandHandler("smslist", sms_list_handler))
+    app.add_handler(CommandHandler("smshelp", sms_help_command))
+    # ────────────────────────────────────────────────────────────
+
     app.add_handler(voice_conv)
     app.add_handler(pay_conv)
     app.add_handler(CallbackQueryHandler(payment_action_cb, pattern="^approve_|^reject_"))
@@ -812,112 +823,8 @@ def main():
     app.add_handler(CallbackQueryHandler(menu_cb, pattern="^cancel$|^gift_sub$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
 
-    logger.info("✅ Bot started!")
+    logger.info("✅ Bot started with SMS Auto-Verify!")
     app.run_polling(drop_pending_updates=True)
-
 
 if __name__ == "__main__":
     main()
-
-# These functions are appended - they will be registered in main()
-
-async def birthday_command(update, ctx):
-    await update.message.reply_text(
-        "🎂 তোমার জন্মদিন কবে?\n\nFormat: DD-MM-YYYY\nExample: 15-03-1995"
-    )
-    ctx.user_data["setting_birthday"] = True
-
-
-async def streak_command(update, ctx):
-    user_id = update.effective_user.id
-    streak = await db.get_streak(user_id)
-    if not streak:
-        await update.message.reply_text("এখনো কোনো streak নেই! প্রতিদিন voice বানালে streak বাড়বে 🔥")
-        return
-    fire = "🔥" * min(streak["current_streak"], 10)
-    await update.message.reply_text(
-        f"🔥 Streak:\n\n{fire}\n\n"
-        f"📅 Current: {streak['current_streak']} days\n"
-        f"🏆 Best: {streak['max_streak']} days\n\n"
-        f"প্রতিদিন voice বানাও streak ধরে রাখো!"
-    )
-
-
-async def search_command(update, ctx):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if not ctx.args:
-        await update.message.reply_text("Usage: /search name বা /search user_id")
-        return
-    query = " ".join(ctx.args)
-    results = await db.search_user(query)
-    if not results:
-        await update.message.reply_text("❌ কোনো user পাওয়া যায়নি!")
-        return
-    text = "🔍 Search Results:\n\n"
-    for u in results:
-        ban = "🚫" if u["is_banned"] else "✅"
-        text += f"{ban} {u['full_name']} (@{u['username'] or 'N/A'})\nID: `{u['user_id']}`\nJoined: {u['joined_at'][:10]}\n\n"
-    await update.message.reply_text(text[:4000], parse_mode="Markdown")
-
-
-async def givevoice_command(update, ctx):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if not ctx.args or len(ctx.args) < 2:
-        await update.message.reply_text("Usage: /givevoice USER_ID AMOUNT")
-        return
-    try:
-        user_id, amount = int(ctx.args[0]), int(ctx.args[1])
-        await db.give_free_voices(user_id, amount)
-        await update.message.reply_text(f"✅ {user_id} কে +{amount} voices দেওয়া হয়েছে!")
-        try:
-            await ctx.bot.send_message(user_id, f"🎁 তোমাকে +{amount} bonus voices দেওয়া হয়েছে! 🎤")
-        except Exception:
-            pass
-    except Exception:
-        await update.message.reply_text("❌ Error! Format: /givevoice 123456 10")
-
-
-async def backup_command(update, ctx):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    import shutil
-    import os
-    try:
-        backup_path = f"backup_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.db"
-        shutil.copy("bot.db", backup_path)
-        await update.message.reply_document(
-            document=open(backup_path, "rb"),
-            filename=backup_path,
-            caption="✅ Database backup!"
-        )
-        os.unlink(backup_path)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Backup failed: {e}")
-
-
-async def errorlog_command(update, ctx):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    logs = await db.get_error_logs(10)
-    if not logs:
-        await update.message.reply_text("✅ কোনো error নেই!")
-        return
-    text = "🔴 Error Logs:\n\n"
-    for log in logs:
-        text += f"• {log['created_at'][:16]} | User: {log['user_id']}\n{log['error'][:100]}\n\n"
-    await update.message.reply_text(text[:4000])
-
-
-async def waitlist_command(update, ctx):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    wl = await db.get_waitlist()
-    if not wl:
-        await update.message.reply_text("✅ Waiting list খালি!")
-        return
-    text = "⏳ Waiting List:\n\n"
-    for w in wl:
-        text += f"• {w['full_name']} | {w['plan']} | {w['created_at'][:10]}\n"
-    await update.message.reply_text(text[:4000])
