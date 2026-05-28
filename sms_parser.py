@@ -1,5 +1,6 @@
 """
-sms_parser.py — SMS Auto Payment Verification (Fixed v2)
+sms_parser.py — SMS Auto Payment Verification (Fixed v3)
+O/0 confusion fix added
 """
 
 import re
@@ -11,11 +12,9 @@ import database as db
 logger = logging.getLogger(__name__)
 
 BKASH_PATTERNS = [
-    # Received SMS
     r'received\s+Tk\s+([\d,]+\.?\d*).*?TrxID\s+([A-Z0-9]+)',
     r'Tk\s+([\d,]+\.?\d*)\s+has been credited.*?TrxID\s+([A-Z0-9]+)',
     r'(?:Tk|BDT)\s*([\d,]+\.?\d*).*?TrxID\s*:?\s*([A-Z0-9]{6,})',
-    # ✅ NEW: Sent/Payment successful SMS
     r'Payment of Tk\s*([\d,]+\.?\d*).*?TrxID\s+([A-Z0-9]+)',
     r'Tk\s*([\d,]+\.?\d*).*?successful.*?TrxID\s+([A-Z0-9]+)',
     r'TrxID\s+([A-Z0-9]+).*?Tk\s*([\d,]+\.?\d*)',
@@ -25,7 +24,6 @@ NAGAD_PATTERNS = [
     r'Amount:\s*Tk\s*([\d,]+\.?\d*).*?TxnID:\s*([A-Z0-9]+)',
     r'Tk\s*([\d,]+\.?\d*).*?TxnID:\s*([A-Z0-9]+)',
     r'Amount.*?([\d,]+\.?\d*).*?TxnID\s*:?\s*([A-Z0-9]+)',
-    # ✅ NEW: Nagad sent patterns
     r'(?:Tk|BDT)\s*([\d,]+\.?\d*).*?TxnID\s*:?\s*([A-Z0-9]{4,})',
     r'TxnID:\s*([A-Z0-9]+).*?Tk\s*([\d,]+\.?\d*)',
 ]
@@ -34,6 +32,26 @@ BANK_PATTERNS = [
     r'BDT\s*([\d,]+\.?\d*).+?(?:TxnId|TxID|TrxID)\s*:?\s*([A-Z0-9]+)',
     r'(?:credited|received)\s+(?:BDT|Tk)\s*([\d,]+\.?\d*).+?(?:TxnId|TrxID)\s*:?\s*([A-Z0-9]+)',
 ]
+
+
+def normalize_trx(trx_id: str) -> list:
+    """
+    ✅ O/0 confusion fix:
+    TrxID এ O (letter) আর 0 (number) দুটো variation return করে
+    যাতে database match হয়
+    """
+    variations = set()
+    variations.add(trx_id)
+    variations.add(trx_id.replace('O', '0'))
+    variations.add(trx_id.replace('0', 'O'))
+    # Mixed replace
+    t = trx_id
+    for i, c in enumerate(t):
+        if c == 'O':
+            variations.add(t[:i] + '0' + t[i+1:])
+        elif c == '0':
+            variations.add(t[:i] + 'O' + t[i+1:])
+    return list(variations)
 
 
 def parse_sms(sender: str, message: str) -> dict | None:
@@ -61,7 +79,6 @@ def parse_sms(sender: str, message: str) -> dict | None:
         if match:
             try:
                 g1, g2 = match.group(1).strip(), match.group(2).strip()
-                # TrxID আগে আসতে পারে বা পরে — amount সবসময় numeric
                 try:
                     amount = float(g1.replace(',', ''))
                     trx_id = g2
@@ -86,12 +103,18 @@ async def find_matching_payment(amount: float, trx_id: str, method: str):
     import aiosqlite
     async with aiosqlite.connect(db.DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
-        async with conn.execute(
-            "SELECT * FROM payments WHERE trx_id=? AND status='pending'", (trx_id,)
-        ) as cur:
-            payment = await cur.fetchone()
-            if payment:
-                return payment
+
+        # ✅ O/0 confusion fix — সব variation try করো
+        trx_variations = normalize_trx(trx_id)
+        for trx in trx_variations:
+            async with conn.execute(
+                "SELECT * FROM payments WHERE trx_id=? AND status='pending'", (trx,)
+            ) as cur:
+                payment = await cur.fetchone()
+                if payment:
+                    return payment
+
+        # Amount + method match
         async with conn.execute("""
             SELECT * FROM payments
             WHERE amount=? AND method=? AND status='pending'
