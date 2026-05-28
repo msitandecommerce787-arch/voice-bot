@@ -700,7 +700,7 @@ def is_sms_text(text: str) -> tuple:
     t = text.lower()
 
     # bKash/Nagad keyword আছে কিনা
-    has_payment = any(x in t for x in ['txnid:', 'txnid ','trxid', 'trnid:', 'tk ', 'amount:'])
+    has_payment = any(x in t for x in ['txnid', 'trxid', 'trnid', 'tk ', 'amount'])
     has_method = any(x in t for x in ['nagad', 'bkash', 'money received', 'received tk', 'payment of tk'])
 
     if not has_payment:
