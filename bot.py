@@ -118,16 +118,13 @@ def make_voice(text, voice_id, stability=0.5, similarity=0.75, style=0.0, speed=
     )
     return b"".join(audio)
 
-# ── RESET HANDLER (Global) ────────────────────────────────────
 async def reset_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """সবসময় কাজ করবে — conversation এর মধ্যেও"""
     user_id = update.effective_user.id
     ctx.user_data.clear()
     kb = admin_keyboard() if user_id == ADMIN_ID else main_keyboard()
     await update.message.reply_text("🔄 Reset!", reply_markup=kb)
     return ConversationHandler.END
 
-# ── /start ─────────────────────────────────────────────────────
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await db.upsert_user(user.id, user.username, user.full_name)
@@ -146,7 +143,6 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb
     )
 
-# ── VOICE ──────────────────────────────────────────────────────
 async def voice_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if await db.is_banned(user_id):
@@ -256,7 +252,6 @@ async def fav_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await db.set_favorite_voice(query.from_user.id, voice_name)
     await query.answer(f"⭐ {voice_name} favorite save হয়েছে!", show_alert=True)
 
-# ── SETTINGS ───────────────────────────────────────────────────
 async def settings_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     current_speed = await db.get_user_speed(user_id)
@@ -279,7 +274,6 @@ async def speed_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     label = next((k for k, v in SPEED_OPTIONS.items() if abs(v - speed) < 0.05), str(speed))
     await query.edit_message_text(f"✅ Speed: {label}")
 
-# ── PROFILE ────────────────────────────────────────────────────
 async def profile_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user = await db.get_user(user_id)
@@ -300,7 +294,6 @@ async def profile_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"🔢 Remaining: {remaining}"
     )
 
-# ── HISTORY ────────────────────────────────────────────────────
 async def history_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     logs = await db.get_voice_history(update.effective_user.id, 5)
     if not logs:
@@ -312,7 +305,6 @@ async def history_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         text += f"{i}. 🎙 {log['voice_name']} | {stars} | {log['created_at'][:16]}\n"
     await update.message.reply_text(text)
 
-# ── LEADERBOARD ────────────────────────────────────────────────
 async def leaderboard_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     leaders = await db.get_leaderboard(10)
     text = "🏆 Leaderboard:\n\n"
@@ -322,7 +314,6 @@ async def leaderboard_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         text += f"{medal} {l['full_name']} — {l['total']} voices\n"
     await update.message.reply_text(text)
 
-# ── REFERRAL ───────────────────────────────────────────────────
 async def referral_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     code = await db.get_referral_code(user_id)
@@ -333,7 +324,6 @@ async def referral_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# ── PAY ────────────────────────────────────────────────────────
 async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = []
     for key, plan in db.PLANS.items():
@@ -444,7 +434,6 @@ async def receive_trx(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-# ── PAYMENT ACTION ─────────────────────────────────────────────
 async def payment_action_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -495,7 +484,6 @@ async def payment_action_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-# ── MYSTATS ────────────────────────────────────────────────────
 async def mystats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     sub = await db.get_active_subscription(update.effective_user.id)
     if not sub:
@@ -507,7 +495,6 @@ async def mystats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"📊 তোমার Stats:\n\n✅ {plan.get('label', sub['plan'])}\n🎤 Used: {sub['voices_used']}/{sub['voice_limit']}\n🔢 Remaining: {remaining}\n📅 Expires: {sub['expires_at'][:10]}"
     )
 
-# ── ADMIN ──────────────────────────────────────────────────────
 async def admin_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -627,13 +614,9 @@ async def admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif query.data == "adm_smssetup":
         await query.edit_message_text(
             "📱 SMS Auto-Verify Setup\n\n"
-            "Android phone এ MacroDroid install করো:\n"
-            "play.google.com/store/apps/details?id=com.arlosoft.macrodroid\n\n"
-            "Macro settings:\n"
+            "MacroDroid Macro settings:\n"
             "TRIGGER: SMS Received (bKash/Nagad)\n"
-            "ACTION: HTTP POST to Telegram API\n\n"
-            "Command format:\n"
-            "`/sms {sender} {message_body}`\n\n"
+            "ACTION: HTTP POST\n\n"
             "Details: /smshelp"
         )
 
@@ -686,21 +669,14 @@ async def admin_text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Invalid ID!")
     ctx.user_data.pop("admin_action", None)
 
-# ── SMS HELP ───────────────────────────────────────────────────
 async def sms_help_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     await update.message.reply_text(
-        "📱 SMS Auto-Verify — Full Setup Guide\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "Step 1: MacroDroid install করো (Android)\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Step 2: নতুন Macro বানাও:\n"
-        "  • TRIGGER → SMS Received\n"
-        "  • Content Filter: TrxID OR TxnID\n\n"
-        "Step 3: ACTION → HTTP Request POST\n\n"
-        "Pending list দেখো: /smslist",
-        parse_mode=None
+        "📱 SMS Auto-Verify Setup\n\n"
+        "MacroDroid → HTTP POST\n"
+        "Trigger: SMS Received (TrxID/TxnID)\n\n"
+        "Pending list: /smslist"
     )
 
 async def menu_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -719,16 +695,37 @@ async def cancel_and_handle(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def handle_buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
-    # MacroDroid থেকে plain text /sms message handle করো
+
+    # ✅ MacroDroid থেকে /sms command handle
     if text and text.startswith("/sms ") and user_id == ADMIN_ID:
         rest = text[5:].strip()
         parts = rest.split(" ", 1)
         if len(parts) >= 2:
-            ctx.args = [parts[0]] + parts[1].split()
+            ctx.args = [parts[0], parts[1]]
         else:
             ctx.args = parts
         await sms_handler(update, ctx)
         return
+
+    # ✅ NEW: MacroDroid থেকে plain text SMS auto-detect
+    # bKash/Nagad SMS সরাসরি আসলে auto parse করবে
+    if text and user_id == ADMIN_ID:
+        text_lower = text.lower()
+        is_sms = (
+            ('txnid:' in text_lower or 'trxid' in text_lower or 'trnid:' in text_lower) and
+            ('tk ' in text_lower or 'bdt' in text_lower or 'amount' in text_lower)
+        )
+        if is_sms:
+            # Sender detect করো
+            if 'nagad' in text_lower:
+                sender = 'Nagad'
+            elif 'bkash' in text_lower or 'bkash' in text_lower:
+                sender = 'bKash'
+            else:
+                sender = 'bKash'
+            ctx.args = [sender, text]
+            await sms_handler(update, ctx)
+            return
 
     if text == "📊 আমার Usage":
         await mystats(update, ctx)
@@ -757,7 +754,6 @@ async def post_init(app):
 def main():
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-    # ── Reset handler — সবার আগে register করো (সবসময় কাজ করবে)
     reset_filter = filters.Regex("^🔄 Reset$")
 
     voice_conv = ConversationHandler(
@@ -772,7 +768,7 @@ def main():
             ],
         },
         fallbacks=[
-            MessageHandler(reset_filter, reset_handler),  # ← Reset সবসময় কাজ করবে
+            MessageHandler(reset_filter, reset_handler),
             CallbackQueryHandler(menu_cb, pattern="^cancel$"),
             CommandHandler("start", start),
             MessageHandler(filters.Regex("^(💳 Subscribe করুন|📊 আমার Usage|⚙️ Settings|👥 Referral|📜 History|🏆 Leaderboard|👤 Profile|🛠 Admin Panel)$"), cancel_and_handle),
@@ -799,7 +795,7 @@ def main():
             ],
         },
         fallbacks=[
-            MessageHandler(reset_filter, reset_handler),  # ← Reset সবসময় কাজ করবে
+            MessageHandler(reset_filter, reset_handler),
             CallbackQueryHandler(menu_cb, pattern="^cancel$"),
             CommandHandler("start", start),
         ],
