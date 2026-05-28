@@ -614,10 +614,9 @@ async def admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif query.data == "adm_smssetup":
         await query.edit_message_text(
             "📱 SMS Auto-Verify Setup\n\n"
-            "MacroDroid Macro settings:\n"
-            "TRIGGER: SMS Received (bKash/Nagad)\n"
-            "ACTION: HTTP POST\n\n"
-            "Details: /smshelp"
+            "MacroDroid → HTTP POST\n"
+            "Trigger: SMS Received (TrxID/TxnID)\n\n"
+            "Pending list: /smslist"
         )
 
 async def admin_text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -692,11 +691,36 @@ async def cancel_and_handle(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await handle_buttons(update, ctx)
     return ConversationHandler.END
 
+def is_sms_text(text: str) -> tuple:
+    """
+    ✅ যেকোনো format এ SMS detect করে
+    MacroDroid থেকে যেভাবেই আসুক — number দিয়ে শুরু হলেও
+    Returns: (is_sms, sender, message)
+    """
+    t = text.lower()
+
+    # bKash/Nagad keyword আছে কিনা
+    has_payment = any(x in t for x in ['txnid:', 'txnid ','trxid', 'trnid:', 'tk ', 'amount:'])
+    has_method = any(x in t for x in ['nagad', 'bkash', 'money received', 'received tk', 'payment of tk'])
+
+    if not has_payment:
+        return False, None, None
+
+    # Sender detect
+    if 'nagad' in t or 'money received' in t or 'txnid:' in t:
+        sender = 'Nagad'
+    elif 'bkash' in t or 'trxid' in t:
+        sender = 'bKash'
+    else:
+        sender = 'Nagad'  # default
+
+    return True, sender, text
+
 async def handle_buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
 
-    # ✅ MacroDroid থেকে /sms command handle
+    # ✅ /sms command handle
     if text and text.startswith("/sms ") and user_id == ADMIN_ID:
         rest = text[5:].strip()
         parts = rest.split(" ", 1)
@@ -707,23 +731,11 @@ async def handle_buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await sms_handler(update, ctx)
         return
 
-    # ✅ NEW: MacroDroid থেকে plain text SMS auto-detect
-    # bKash/Nagad SMS সরাসরি আসলে auto parse করবে
+    # ✅ MacroDroid থেকে যেকোনো format এ SMS auto-detect
     if text and user_id == ADMIN_ID:
-        text_lower = text.lower()
-        is_sms = (
-            ('txnid:' in text_lower or 'trxid' in text_lower or 'trnid:' in text_lower) and
-            ('tk ' in text_lower or 'bdt' in text_lower or 'amount' in text_lower)
-        )
+        is_sms, sender, message = is_sms_text(text)
         if is_sms:
-            # Sender detect করো
-            if 'nagad' in text_lower:
-                sender = 'Nagad'
-            elif 'bkash' in text_lower or 'bkash' in text_lower:
-                sender = 'bKash'
-            else:
-                sender = 'bKash'
-            ctx.args = [sender, text]
+            ctx.args = [sender, message]
             await sms_handler(update, ctx)
             return
 
