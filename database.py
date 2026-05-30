@@ -1,8 +1,8 @@
-import aiosqlite
 import os
+import asyncpg
 from datetime import datetime, timedelta
 
-DB_PATH = "bot.db"
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 PLANS = {
     "basic":   {"price_bdt": 100,  "price_usdt": 1,  "voice_limit": 5,   "days": 30, "label": "🥉 Basic — 5 voice"},
@@ -16,78 +16,101 @@ PLANS = {
 }
 
 BADGES = {
-    "newcomer":   {"label": "🌱 Newcomer",   "voices": 0},
-    "starter":    {"label": "⭐ Starter",    "voices": 10},
-    "regular":    {"label": "🔥 Regular",    "voices": 50},
-    "pro":        {"label": "💎 Pro",        "voices": 100},
-    "legend":     {"label": "👑 Legend",     "voices": 500},
+    "newcomer": {"label": "🌱 Newcomer", "voices": 0},
+    "starter":  {"label": "⭐ Starter",  "voices": 10},
+    "regular":  {"label": "🔥 Regular",  "voices": 50},
+    "pro":      {"label": "💎 Pro",      "voices": 100},
+    "legend":   {"label": "👑 Legend",   "voices": 500},
 }
 
+_pool = None
+
+async def get_pool():
+    global _pool
+    if _pool is None:
+        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
+    return _pool
 
 async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
+                user_id BIGINT PRIMARY KEY,
                 username TEXT,
                 full_name TEXT,
-                joined_at TEXT DEFAULT (datetime('now')),
+                joined_at TIMESTAMP DEFAULT NOW(),
                 is_banned INTEGER DEFAULT 0,
                 referral_code TEXT,
-                referred_by INTEGER,
+                referred_by BIGINT,
                 reseller_code TEXT,
-                reseller_commission INTEGER DEFAULT 0
+                reseller_commission INTEGER DEFAULT 0,
+                birthday TEXT
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
                 plan TEXT,
                 voice_limit INTEGER,
                 voices_used INTEGER DEFAULT 0,
-                started_at TEXT,
-                expires_at TEXT,
+                started_at TIMESTAMP,
+                expires_at TIMESTAMP,
                 is_active INTEGER DEFAULT 1,
-                gifted_by INTEGER DEFAULT NULL
+                gifted_by BIGINT DEFAULT NULL
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS payments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
                 method TEXT,
                 amount REAL,
                 plan TEXT,
                 trx_id TEXT UNIQUE,
                 status TEXT DEFAULT 'pending',
-                created_at TEXT DEFAULT (datetime('now')),
-                verified_at TEXT
+                created_at TIMESTAMP DEFAULT NOW(),
+                verified_at TIMESTAMP
             )
         """)
-        await db.execute("""
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS zinipay_payments (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                plan TEXT,
+                amount REAL,
+                invoice_id TEXT UNIQUE,
+                val_id TEXT,
+                payment_url TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT NOW(),
+                verified_at TIMESTAMP
+            )
+        """)
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS voice_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
                 voice_name TEXT,
                 text_length INTEGER,
                 rating INTEGER DEFAULT 0,
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TIMESTAMP DEFAULT NOW()
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS favorite_voices (
-                user_id INTEGER PRIMARY KEY,
+                user_id BIGINT PRIMARY KEY,
                 voice_name TEXT
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS user_speed (
-                user_id INTEGER PRIMARY KEY,
+                user_id BIGINT PRIMARY KEY,
                 speed REAL DEFAULT 0.75
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS coupons (
                 code TEXT PRIMARY KEY,
                 discount_percent INTEGER,
@@ -96,95 +119,92 @@ async def init_db():
                 is_active INTEGER DEFAULT 1
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS referrals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                referrer_id INTEGER,
-                referred_id INTEGER,
+                id SERIAL PRIMARY KEY,
+                referrer_id BIGINT,
+                referred_id BIGINT,
                 bonus_voices INTEGER DEFAULT 3,
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TIMESTAMP DEFAULT NOW()
             )
         """)
-        await db.execute("""
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS reseller_sales (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                reseller_id INTEGER,
-                buyer_id INTEGER,
+                id SERIAL PRIMARY KEY,
+                reseller_id BIGINT,
+                buyer_id BIGINT,
                 plan TEXT,
                 amount REAL,
                 commission REAL,
-                created_at TEXT DEFAULT (datetime('now'))
+                created_at TIMESTAMP DEFAULT NOW()
             )
         """)
-        await db.commit()
-
-        for col in ["referral_code", "referred_by", "reseller_code", "reseller_commission"]:
-            try:
-                await db.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
-                await db.commit()
-            except Exception:
-                pass
-        try:
-            await db.execute("ALTER TABLE subscriptions ADD COLUMN gifted_by INTEGER DEFAULT NULL")
-            await db.commit()
-        except Exception:
-            pass
-        try:
-            await db.execute("ALTER TABLE voice_logs ADD COLUMN rating INTEGER DEFAULT 0")
-            await db.commit()
-        except Exception:
-            pass
-
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS streaks (
+                user_id BIGINT PRIMARY KEY,
+                current_streak INTEGER DEFAULT 0,
+                last_used TEXT,
+                max_streak INTEGER DEFAULT 0
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS error_logs (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                error TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS waitlist (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                plan TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
 
 # ── USER ──────────────────────────────────────────────────────
 async def upsert_user(user_id, username, full_name):
     import random, string
     ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
             INSERT INTO users (user_id, username, full_name, referral_code)
-            VALUES (?, ?, ?, ?)
+            VALUES ($1, $2, $3, $4)
             ON CONFLICT(user_id) DO UPDATE SET
-                username=excluded.username, full_name=excluded.full_name
-        """, (user_id, username or "", full_name or "", ref_code))
-        await db.commit()
-
+                username=EXCLUDED.username, full_name=EXCLUDED.full_name
+        """, user_id, username or "", full_name or "", ref_code)
 
 async def get_user(user_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM users WHERE user_id=?", (user_id,)) as cur:
-            return await cur.fetchone()
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchrow("SELECT * FROM users WHERE user_id=$1", user_id)
 
 async def is_banned(user_id):
     user = await get_user(user_id)
     return bool(user and user["is_banned"])
 
-
 async def ban_user(user_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET is_banned=1 WHERE user_id=?", (user_id,))
-        await db.commit()
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE users SET is_banned=1 WHERE user_id=$1", user_id)
 
 async def unban_user(user_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET is_banned=0 WHERE user_id=?", (user_id,))
-        await db.commit()
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE users SET is_banned=0 WHERE user_id=$1", user_id)
 
 # ── SUBSCRIPTION ──────────────────────────────────────────────
 async def get_active_subscription(user_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchrow("""
             SELECT * FROM subscriptions
-            WHERE user_id=? AND is_active=1 AND expires_at > datetime('now')
+            WHERE user_id=$1 AND is_active=1 AND expires_at > NOW()
             ORDER BY expires_at DESC LIMIT 1
-        """, (user_id,)) as cur:
-            return await cur.fetchone()
-
+        """, user_id)
 
 async def can_use_voice(user_id):
     sub = await get_active_subscription(user_id)
@@ -194,498 +214,410 @@ async def can_use_voice(user_id):
         return False, "limit_reached"
     return True, "ok"
 
-
 async def increment_voice_usage(user_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
             UPDATE subscriptions SET voices_used = voices_used + 1
-            WHERE user_id=? AND is_active=1 AND expires_at > datetime('now')
-        """, (user_id,))
-        await db.commit()
-
+            WHERE user_id=$1 AND is_active=1 AND expires_at > NOW()
+        """, user_id)
 
 async def create_subscription(user_id, plan, bonus=0, gifted_by=None):
-    """
-    Subscription বানায়।
-    ✅ Active subscription থাকলে: remaining voices + নতুন voices add হবে
-    ✅ No subscription: নতুন subscription বানাবে
-    """
     plan_data = PLANS[plan]
     new_voices = plan_data["voice_limit"] + bonus
-    expires = (datetime.utcnow() + timedelta(days=plan_data["days"])).isoformat()
-    started = datetime.utcnow().isoformat()
-
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-
-        # Check existing active subscription
-        async with db.execute("""
+    expires = datetime.utcnow() + timedelta(days=plan_data["days"])
+    started = datetime.utcnow()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        existing = await conn.fetchrow("""
             SELECT * FROM subscriptions
-            WHERE user_id=? AND is_active=1 AND expires_at > datetime('now')
+            WHERE user_id=$1 AND is_active=1 AND expires_at > NOW()
             ORDER BY expires_at DESC LIMIT 1
-        """, (user_id,)) as cur:
-            existing = await cur.fetchone()
-
+        """, user_id)
         if existing:
-            # Remaining voices carry over + new voices add হবে
             remaining = existing["voice_limit"] - existing["voices_used"]
             total_voices = remaining + new_voices
-
-            # পুরনো deactivate করো
-            await db.execute("UPDATE subscriptions SET is_active=0 WHERE user_id=?", (user_id,))
-
-            # নতুন subscription — remaining + new voices
-            await db.execute("""
+            await conn.execute("UPDATE subscriptions SET is_active=0 WHERE user_id=$1", user_id)
+            await conn.execute("""
                 INSERT INTO subscriptions (user_id, plan, voice_limit, voices_used, started_at, expires_at, gifted_by)
-                VALUES (?, ?, ?, 0, ?, ?, ?)
-            """, (user_id, plan, total_voices, started, expires, gifted_by))
+                VALUES ($1, $2, $3, 0, $4, $5, $6)
+            """, user_id, plan, total_voices, started, expires, gifted_by)
         else:
-            # কোনো active subscription নেই — নতুন বানাও
-            await db.execute("UPDATE subscriptions SET is_active=0 WHERE user_id=?", (user_id,))
-            await db.execute("""
+            await conn.execute("UPDATE subscriptions SET is_active=0 WHERE user_id=$1", user_id)
+            await conn.execute("""
                 INSERT INTO subscriptions (user_id, plan, voice_limit, voices_used, started_at, expires_at, gifted_by)
-                VALUES (?, ?, ?, 0, ?, ?, ?)
-            """, (user_id, plan, new_voices, started, expires, gifted_by))
-
-        await db.commit()
-
+                VALUES ($1, $2, $3, 0, $4, $5, $6)
+            """, user_id, plan, new_voices, started, expires, gifted_by)
 
 # ── VOICE LOG & RATING ────────────────────────────────────────
 async def log_voice(user_id, voice_name, text_length):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            INSERT INTO voice_logs (user_id, voice_name, text_length) VALUES (?, ?, ?)
-        """, (user_id, voice_name, text_length))
-        cur = await db.execute("SELECT last_insert_rowid()")
-        row = await cur.fetchone()
-        await db.commit()
-        return row[0]
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            INSERT INTO voice_logs (user_id, voice_name, text_length) VALUES ($1, $2, $3) RETURNING id
+        """, user_id, voice_name, text_length)
+        return row["id"]
 
 async def rate_voice(log_id, rating):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE voice_logs SET rating=? WHERE id=?", (rating, log_id))
-        await db.commit()
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE voice_logs SET rating=$1 WHERE id=$2", rating, log_id)
 
 async def get_voice_history(user_id, limit=5):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
             SELECT id, voice_name, text_length, rating, created_at FROM voice_logs
-            WHERE user_id=? ORDER BY created_at DESC LIMIT ?
-        """, (user_id, limit)) as cur:
-            return await cur.fetchall()
-
+            WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2
+        """, user_id, limit)
 
 async def get_total_voices(user_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT COUNT(*) FROM voice_logs WHERE user_id=?", (user_id,)) as cur:
-            row = await cur.fetchone()
-            return row[0]
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval("SELECT COUNT(*) FROM voice_logs WHERE user_id=$1", user_id)
 
 # ── SPEED & FAVORITE ──────────────────────────────────────────
 async def get_user_speed(user_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT speed FROM user_speed WHERE user_id=?", (user_id,)) as cur:
-            row = await cur.fetchone()
-            return row["speed"] if row else 0.75
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        val = await conn.fetchval("SELECT speed FROM user_speed WHERE user_id=$1", user_id)
+        return val if val is not None else 0.75
 
 async def set_user_speed(user_id, speed):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            INSERT INTO user_speed (user_id, speed) VALUES (?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET speed=excluded.speed
-        """, (user_id, speed))
-        await db.commit()
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO user_speed (user_id, speed) VALUES ($1, $2)
+            ON CONFLICT(user_id) DO UPDATE SET speed=EXCLUDED.speed
+        """, user_id, speed)
 
 async def get_favorite_voice(user_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT voice_name FROM favorite_voices WHERE user_id=?", (user_id,)) as cur:
-            row = await cur.fetchone()
-            return row["voice_name"] if row else None
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval("SELECT voice_name FROM favorite_voices WHERE user_id=$1", user_id)
 
 async def set_favorite_voice(user_id, voice_name):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            INSERT INTO favorite_voices (user_id, voice_name) VALUES (?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET voice_name=excluded.voice_name
-        """, (user_id, voice_name))
-        await db.commit()
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO favorite_voices (user_id, voice_name) VALUES ($1, $2)
+            ON CONFLICT(user_id) DO UPDATE SET voice_name=EXCLUDED.voice_name
+        """, user_id, voice_name)
 
 # ── COUPON ────────────────────────────────────────────────────
 async def create_coupon(code, discount_percent, max_uses):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            INSERT OR REPLACE INTO coupons (code, discount_percent, max_uses)
-            VALUES (?, ?, ?)
-        """, (code.upper(), discount_percent, max_uses))
-        await db.commit()
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO coupons (code, discount_percent, max_uses)
+            VALUES ($1, $2, $3)
+            ON CONFLICT(code) DO UPDATE SET discount_percent=EXCLUDED.discount_percent, max_uses=EXCLUDED.max_uses
+        """, code.upper(), discount_percent, max_uses)
 
 async def use_coupon(code):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("""
-            SELECT * FROM coupons WHERE code=? AND is_active=1 AND used_count < max_uses
-        """, (code.upper(),)) as cur:
-            coupon = await cur.fetchone()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        coupon = await conn.fetchrow("""
+            SELECT * FROM coupons WHERE code=$1 AND is_active=1 AND used_count < max_uses
+        """, code.upper())
         if not coupon:
             return None
-        await db.execute("UPDATE coupons SET used_count = used_count + 1 WHERE code=?", (code.upper(),))
-        await db.commit()
+        await conn.execute("UPDATE coupons SET used_count = used_count + 1 WHERE code=$1", code.upper())
         return coupon
-
 
 # ── REFERRAL ──────────────────────────────────────────────────
 async def get_referral_code(user_id):
     user = await get_user(user_id)
     return user["referral_code"] if user else None
 
-
 async def process_referral(referrer_code, new_user_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT user_id FROM users WHERE referral_code=?", (referrer_code,)) as cur:
-            referrer = await cur.fetchone()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        referrer = await conn.fetchrow("SELECT user_id FROM users WHERE referral_code=$1", referrer_code)
         if not referrer or referrer["user_id"] == new_user_id:
             return None
         referrer_id = referrer["user_id"]
-        await db.execute("""
+        await conn.execute("""
             UPDATE subscriptions SET voice_limit = voice_limit + 3
-            WHERE user_id=? AND is_active=1 AND expires_at > datetime('now')
-        """, (referrer_id,))
-        await db.execute("INSERT INTO referrals (referrer_id, referred_id) VALUES (?, ?)", (referrer_id, new_user_id))
-        await db.execute("UPDATE users SET referred_by=? WHERE user_id=?", (referrer_id, new_user_id))
-        await db.commit()
+            WHERE user_id=$1 AND is_active=1 AND expires_at > NOW()
+        """, referrer_id)
+        await conn.execute("INSERT INTO referrals (referrer_id, referred_id) VALUES ($1, $2)", referrer_id, new_user_id)
+        await conn.execute("UPDATE users SET referred_by=$1 WHERE user_id=$2", referrer_id, new_user_id)
         return referrer_id
-
 
 # ── RESELLER ──────────────────────────────────────────────────
 async def create_reseller(user_id, commission_percent):
     import random, string
     code = "RS" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            UPDATE users SET reseller_code=?, reseller_commission=? WHERE user_id=?
-        """, (code, commission_percent, user_id))
-        await db.commit()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE users SET reseller_code=$1, reseller_commission=$2 WHERE user_id=$3
+        """, code, commission_percent, user_id)
     return code
 
-
 async def get_reseller_by_code(code):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM users WHERE reseller_code=?", (code,)) as cur:
-            return await cur.fetchone()
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchrow("SELECT * FROM users WHERE reseller_code=$1", code)
 
 async def add_reseller_sale(reseller_id, buyer_id, plan, amount, commission):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
             INSERT INTO reseller_sales (reseller_id, buyer_id, plan, amount, commission)
-            VALUES (?, ?, ?, ?, ?)
-        """, (reseller_id, buyer_id, plan, amount, commission))
-        await db.commit()
-
+            VALUES ($1, $2, $3, $4, $5)
+        """, reseller_id, buyer_id, plan, amount, commission)
 
 # ── PAYMENT ───────────────────────────────────────────────────
 async def save_payment(user_id, method, amount, plan, trx_id):
-    async with aiosqlite.connect(DB_PATH) as db:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         try:
-            await db.execute("""
+            await conn.execute("""
                 INSERT INTO payments (user_id, method, amount, plan, trx_id)
-                VALUES (?, ?, ?, ?, ?)
-            """, (user_id, method, amount, plan, trx_id))
-            await db.commit()
+                VALUES ($1, $2, $3, $4, $5)
+            """, user_id, method, amount, plan, trx_id)
             return True
         except Exception:
-            return False  # Duplicate TRX
-
+            return False
 
 async def approve_payment(trx_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM payments WHERE trx_id=? AND status='pending'", (trx_id,)) as cur:
-            payment = await cur.fetchone()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        payment = await conn.fetchrow("SELECT * FROM payments WHERE trx_id=$1 AND status='pending'", trx_id)
         if not payment:
             return None
-        await db.execute("UPDATE payments SET status='verified', verified_at=datetime('now') WHERE trx_id=?", (trx_id,))
-        await db.commit()
+        await conn.execute("UPDATE payments SET status='verified', verified_at=NOW() WHERE trx_id=$1", trx_id)
         return payment
 
+# ── ZINIPAY PAYMENTS ──────────────────────────────────────────
+async def save_zinipay_payment(user_id, plan_key, amount, invoice_id, payment_url, val_id=""):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            await conn.execute("""
+                INSERT INTO zinipay_payments (user_id, plan, amount, invoice_id, val_id, payment_url)
+                VALUES ($1, $2, $3, $4, $5, $6)
+            """, user_id, plan_key, amount, invoice_id, val_id, payment_url)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"ZiniPay DB save error: {e}")
+
+async def get_zinipay_payment(invoice_id):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchrow("SELECT * FROM zinipay_payments WHERE invoice_id=$1", invoice_id)
+
+async def approve_zinipay_payment(invoice_id):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        payment = await conn.fetchrow(
+            "SELECT * FROM zinipay_payments WHERE invoice_id=$1 AND status='pending'", invoice_id
+        )
+        if not payment:
+            return False
+        await conn.execute("""
+            UPDATE zinipay_payments SET status='verified', verified_at=NOW()
+            WHERE invoice_id=$1
+        """, invoice_id)
+    await create_subscription(payment["user_id"], payment["plan"])
+    return True
+
+async def get_pending_zinipay_payments():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        try:
+            return await conn.fetch("""
+                SELECT z.*, u.full_name, u.username
+                FROM zinipay_payments z
+                LEFT JOIN users u ON z.user_id = u.user_id
+                WHERE z.status='pending'
+                ORDER BY z.created_at DESC LIMIT 10
+            """)
+        except Exception:
+            return []
 
 # ── EXPIRY ────────────────────────────────────────────────────
 async def get_expiring_soon(days=3):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(f"""
-            SELECT s.user_id, s.plan, s.expires_at FROM subscriptions s
-            WHERE s.is_active=1
-            AND s.expires_at > datetime('now')
-            AND s.expires_at < datetime('now', '+{days} days')
-        """) as cur:
-            return await cur.fetchall()
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT user_id, plan, expires_at FROM subscriptions
+            WHERE is_active=1 AND expires_at > NOW()
+            AND expires_at < NOW() + ($1 || ' days')::INTERVAL
+        """, str(days))
 
 async def get_inactive_users(days=7):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(f"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch(f"""
             SELECT DISTINCT u.user_id, u.full_name FROM users u
             LEFT JOIN voice_logs v ON u.user_id = v.user_id
             WHERE u.is_banned=0
-            AND (v.created_at < datetime('now', '-{days} days') OR v.created_at IS NULL)
-        """) as cur:
-            return await cur.fetchall()
-
+            AND (v.created_at < NOW() - INTERVAL '{days} days' OR v.created_at IS NULL)
+        """)
 
 # ── LEADERBOARD ───────────────────────────────────────────────
 async def get_leaderboard(limit=10):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
             SELECT u.full_name, u.user_id, COUNT(v.id) as total
             FROM users u
             LEFT JOIN voice_logs v ON u.user_id = v.user_id
             WHERE u.is_banned=0
-            GROUP BY u.user_id
-            ORDER BY total DESC LIMIT ?
-        """, (limit,)) as cur:
-            return await cur.fetchall()
-
+            GROUP BY u.user_id, u.full_name
+            ORDER BY total DESC LIMIT $1
+        """, limit)
 
 # ── ADMIN STATS ───────────────────────────────────────────────
 async def get_admin_stats():
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         stats = {}
-        async with db.execute("SELECT COUNT(*) as c FROM users") as cur:
-            stats["total_users"] = (await cur.fetchone())["c"]
-        async with db.execute("SELECT COUNT(*) as c FROM subscriptions WHERE is_active=1 AND expires_at > datetime('now')") as cur:
-            stats["active_subs"] = (await cur.fetchone())["c"]
-        async with db.execute("SELECT COUNT(*) as c FROM voice_logs") as cur:
-            stats["total_voices"] = (await cur.fetchone())["c"]
-        async with db.execute("SELECT COUNT(*) as c FROM payments WHERE status='verified'") as cur:
-            stats["total_payments"] = (await cur.fetchone())["c"]
-        async with db.execute("SELECT COUNT(*) as c FROM payments WHERE status='pending'") as cur:
-            stats["pending_payments"] = (await cur.fetchone())["c"]
-        async with db.execute("SELECT SUM(amount) as s FROM payments WHERE status='verified'") as cur:
-            row = await cur.fetchone()
-            stats["total_revenue"] = row["s"] or 0
-        async with db.execute("SELECT AVG(rating) as a FROM voice_logs WHERE rating > 0") as cur:
-            row = await cur.fetchone()
-            stats["avg_rating"] = round(row["a"] or 0, 1)
+        stats["total_users"]    = await conn.fetchval("SELECT COUNT(*) FROM users")
+        stats["active_subs"]    = await conn.fetchval("SELECT COUNT(*) FROM subscriptions WHERE is_active=1 AND expires_at > NOW()")
+        stats["total_voices"]   = await conn.fetchval("SELECT COUNT(*) FROM voice_logs")
+        stats["total_payments"] = await conn.fetchval("SELECT COUNT(*) FROM payments WHERE status='verified'")
+        stats["pending_payments"] = await conn.fetchval("SELECT COUNT(*) FROM payments WHERE status='pending'")
+        rev = await conn.fetchval("SELECT SUM(amount) FROM payments WHERE status='verified'")
+        stats["total_revenue"]  = rev or 0
+        avg = await conn.fetchval("SELECT AVG(rating) FROM voice_logs WHERE rating > 0")
+        stats["avg_rating"]     = round(avg or 0, 1)
         return stats
 
-
 async def get_pending_payments():
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
             SELECT p.*, u.username, u.full_name FROM payments p
             LEFT JOIN users u ON p.user_id = u.user_id
             WHERE p.status='pending' ORDER BY p.created_at DESC LIMIT 10
-        """) as cur:
-            return await cur.fetchall()
-
+        """)
 
 async def get_all_users():
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
             SELECT u.*, s.plan, s.voices_used, s.voice_limit, s.expires_at
             FROM users u
             LEFT JOIN subscriptions s ON u.user_id = s.user_id AND s.is_active=1
             ORDER BY u.joined_at DESC LIMIT 20
-        """) as cur:
-            return await cur.fetchall()
-
+        """)
 
 async def get_all_user_ids():
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT user_id FROM users WHERE is_banned=0") as cur:
-            rows = await cur.fetchall()
-            return [r[0] for r in rows]
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT user_id FROM users WHERE is_banned=0")
+        return [r["user_id"] for r in rows]
 
 async def get_sales_report():
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         report = {}
-        async with db.execute("SELECT plan, COUNT(*) as count, SUM(amount) as total FROM payments WHERE status='verified' GROUP BY plan") as cur:
-            report["by_plan"] = await cur.fetchall()
-        async with db.execute("SELECT method, COUNT(*) as count, SUM(amount) as total FROM payments WHERE status='verified' GROUP BY method") as cur:
-            report["by_method"] = await cur.fetchall()
-        async with db.execute("SELECT SUM(amount) as total FROM payments WHERE status='verified' AND created_at > datetime('now', '-30 days')") as cur:
-            row = await cur.fetchone()
-            report["monthly"] = row["total"] or 0
-        async with db.execute("SELECT SUM(amount) as total FROM payments WHERE status='verified' AND created_at > datetime('now', '-7 days')") as cur:
-            row = await cur.fetchone()
-            report["weekly"] = row["total"] or 0
+        report["by_plan"]   = await conn.fetch("SELECT plan, COUNT(*) as count, SUM(amount) as total FROM payments WHERE status='verified' GROUP BY plan")
+        report["by_method"] = await conn.fetch("SELECT method, COUNT(*) as count, SUM(amount) as total FROM payments WHERE status='verified' GROUP BY method")
+        monthly = await conn.fetchval("SELECT SUM(amount) FROM payments WHERE status='verified' AND created_at > NOW() - INTERVAL '30 days'")
+        weekly  = await conn.fetchval("SELECT SUM(amount) FROM payments WHERE status='verified' AND created_at > NOW() - INTERVAL '7 days'")
+        report["monthly"] = monthly or 0
+        report["weekly"]  = weekly or 0
         return report
-
 
 # ── STREAK ────────────────────────────────────────────────────
 async def update_streak(user_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        try:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS streaks (
-                    user_id INTEGER PRIMARY KEY,
-                    current_streak INTEGER DEFAULT 0,
-                    last_used TEXT,
-                    max_streak INTEGER DEFAULT 0
-                )
-            """)
-            await db.commit()
-        except Exception:
-            pass
-
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM streaks WHERE user_id=?", (user_id,)) as cur:
-            row = await cur.fetchone()
-
-        today = datetime.utcnow().date().isoformat()
+    pool = await get_pool()
+    today = datetime.utcnow().date().isoformat()
+    yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM streaks WHERE user_id=$1", user_id)
         if not row:
-            await db.execute("INSERT INTO streaks (user_id, current_streak, last_used, max_streak) VALUES (?, 1, ?, 1)", (user_id, today))
+            await conn.execute("INSERT INTO streaks (user_id, current_streak, last_used, max_streak) VALUES ($1, 1, $2, 1)", user_id, today)
         else:
             last = row["last_used"]
-            yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
             if last == today:
                 pass
             elif last == yesterday:
                 new_streak = row["current_streak"] + 1
                 max_s = max(new_streak, row["max_streak"])
-                await db.execute("UPDATE streaks SET current_streak=?, last_used=?, max_streak=? WHERE user_id=?",
-                                 (new_streak, today, max_s, user_id))
+                await conn.execute("UPDATE streaks SET current_streak=$1, last_used=$2, max_streak=$3 WHERE user_id=$4", new_streak, today, max_s, user_id)
             else:
-                await db.execute("UPDATE streaks SET current_streak=1, last_used=? WHERE user_id=?", (today, user_id))
-        await db.commit()
-
+                await conn.execute("UPDATE streaks SET current_streak=1, last_used=$1 WHERE user_id=$2", today, user_id)
 
 async def get_streak(user_id):
-    async with aiosqlite.connect(DB_PATH) as db:
-        try:
-            await db.execute("CREATE TABLE IF NOT EXISTS streaks (user_id INTEGER PRIMARY KEY, current_streak INTEGER DEFAULT 0, last_used TEXT, max_streak INTEGER DEFAULT 0)")
-            await db.commit()
-        except Exception:
-            pass
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM streaks WHERE user_id=?", (user_id,)) as cur:
-            return await cur.fetchone()
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchrow("SELECT * FROM streaks WHERE user_id=$1", user_id)
 
 # ── BIRTHDAY ──────────────────────────────────────────────────
 async def set_birthday(user_id, birthday):
-    async with aiosqlite.connect(DB_PATH) as db:
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN birthday TEXT")
-            await db.commit()
-        except Exception:
-            pass
-        await db.execute("UPDATE users SET birthday=? WHERE user_id=?", (birthday, user_id))
-        await db.commit()
-
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE users SET birthday=$1 WHERE user_id=$2", birthday, user_id)
 
 async def get_birthday_users():
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        today = datetime.utcnow().strftime("%m-%d")
+    pool = await get_pool()
+    today = datetime.utcnow().strftime("%m-%d")
+    async with pool.acquire() as conn:
         try:
-            async with db.execute("SELECT user_id, full_name FROM users WHERE birthday LIKE ?", (f"%-{today}",)) as cur:
-                return await cur.fetchall()
+            return await conn.fetch("SELECT user_id, full_name FROM users WHERE birthday LIKE $1", f"%-{today}")
         except Exception:
             return []
-
 
 # ── ERROR LOG ─────────────────────────────────────────────────
 async def log_error(error_msg, user_id=None):
-    async with aiosqlite.connect(DB_PATH) as db:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         try:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS error_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    error TEXT,
-                    created_at TEXT DEFAULT (datetime('now'))
-                )
-            """)
-            await db.execute("INSERT INTO error_logs (user_id, error) VALUES (?, ?)", (user_id, str(error_msg)[:500]))
-            await db.commit()
+            await conn.execute("INSERT INTO error_logs (user_id, error) VALUES ($1, $2)", user_id, str(error_msg)[:500])
         except Exception:
             pass
 
-
 async def get_error_logs(limit=10):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         try:
-            async with db.execute("SELECT * FROM error_logs ORDER BY created_at DESC LIMIT ?", (limit,)) as cur:
-                return await cur.fetchall()
+            return await conn.fetch("SELECT * FROM error_logs ORDER BY created_at DESC LIMIT $1", limit)
         except Exception:
             return []
-
 
 # ── USER SEARCH ───────────────────────────────────────────────
 async def search_user(query):
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         try:
             user_id = int(query)
-            async with db.execute("SELECT * FROM users WHERE user_id=?", (user_id,)) as cur:
-                row = await cur.fetchone()
-                return [row] if row else []
+            row = await conn.fetchrow("SELECT * FROM users WHERE user_id=$1", user_id)
+            return [row] if row else []
         except ValueError:
-            async with db.execute("SELECT * FROM users WHERE full_name LIKE ? OR username LIKE ? LIMIT 5",
-                                   (f"%{query}%", f"%{query}%")) as cur:
-                return await cur.fetchall()
+            return await conn.fetch("SELECT * FROM users WHERE full_name ILIKE $1 OR username ILIKE $1 LIMIT 5", f"%{query}%")
 
-
-# ── WAITING LIST ──────────────────────────────────────────────
+# ── WAITLIST ──────────────────────────────────────────────────
 async def add_to_waitlist(user_id, plan):
-    async with aiosqlite.connect(DB_PATH) as db:
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         try:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS waitlist (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER,
-                    plan TEXT,
-                    created_at TEXT DEFAULT (datetime('now'))
-                )
-            """)
-            await db.execute("INSERT INTO waitlist (user_id, plan) VALUES (?, ?)", (user_id, plan))
-            await db.commit()
+            await conn.execute("INSERT INTO waitlist (user_id, plan) VALUES ($1, $2)", user_id, plan)
         except Exception:
             pass
 
-
 async def get_waitlist():
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    pool = await get_pool()
+    async with pool.acquire() as conn:
         try:
-            async with db.execute("""
+            return await conn.fetch("""
                 SELECT w.*, u.full_name, u.username FROM waitlist w
                 LEFT JOIN users u ON w.user_id = u.user_id
                 ORDER BY w.created_at ASC
-            """) as cur:
-                return await cur.fetchall()
+            """)
         except Exception:
             return []
 
-
 # ── GIVE FREE VOICES ──────────────────────────────────────────
 async def give_free_voices(user_id, amount):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            UPDATE subscriptions SET voice_limit = voice_limit + ?
-            WHERE user_id=? AND is_active=1 AND expires_at > datetime('now')
-        """, (amount, user_id))
-        await db.commit()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE subscriptions SET voice_limit = voice_limit + $1
+            WHERE user_id=$2 AND is_active=1 AND expires_at > NOW()
+        """, amount, user_id)
