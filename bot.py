@@ -486,7 +486,9 @@ async def zinipay_verify_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await ctx.bot.send_message(user_id, "❌ Payment record পাওয়া যায়নি!")
         return
 
-    result = await verify_zinipay_invoice(invoice_id)
+    # val_id দিয়ে verify করো
+    verify_id = payment["val_id"] if payment["val_id"] else invoice_id
+    result = await verify_zinipay_invoice(verify_id)
 
     if not result:
         await ctx.bot.send_message(
@@ -498,9 +500,11 @@ async def zinipay_verify_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    status = result.get("status", "").upper()
-
-    if status == "COMPLETED":
+    # status check — ZiniPay COMPLETED বা status=True দিতে পারে
+    raw_status = result.get("status")
+    payment_status = result.get("payment_status", "")
+    
+    if raw_status is True or str(payment_status).upper() == "COMPLETED" or result.get("transaction_id"):
         success = await approve_zinipay_payment(invoice_id)
         if success:
             plan = db.PLANS[payment["plan"]]
@@ -547,7 +551,7 @@ async def zinipay_verify_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             await ctx.bot.send_message(user_id, "✅ Already activated!")
 
-    elif status == "PENDING":
+    elif str(payment_status).upper() == "PENDING" or raw_status is False:
         await ctx.bot.send_message(
             user_id,
             "⏳ Payment এখনো pending!\n\nPayment complete হলে আবার verify করো।",
