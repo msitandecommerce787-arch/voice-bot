@@ -995,11 +995,11 @@ def main():
     app.add_handler(CommandHandler("smslist", sms_list_handler))
     app.add_handler(CommandHandler("smshelp", sms_help_command))
 
+    # ── ZiniPay verify handler — সবার আগে add করতে হবে ──
+    app.add_handler(CallbackQueryHandler(zinipay_verify_cb, pattern="^zini_verify_"), group=0)
+
     app.add_handler(voice_conv)
     app.add_handler(pay_conv)
-
-    # ── ZiniPay handlers ──
-    app.add_handler(CallbackQueryHandler(zinipay_verify_cb, pattern="^zini_verify_"))
 
     app.add_handler(CallbackQueryHandler(payment_action_cb, pattern="^approve_|^reject_"))
     app.add_handler(CallbackQueryHandler(admin_cb, pattern="^adm_"))
