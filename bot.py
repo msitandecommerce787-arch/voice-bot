@@ -13,6 +13,13 @@ from telegram.ext import (
 import database as db
 from scheduler import start_scheduler
 from sms_parser import sms_handler, sms_list_handler
+from zinipay import (
+    create_zinipay_invoice,
+    verify_zinipay_invoice,
+    approve_zinipay_payment,
+    get_zinipay_payment_by_val_id,
+    get_pending_zinipay_payments,
+)
 
 try:
     from invoice import generate_invoice
@@ -324,6 +331,10 @@ async def referral_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+# ══════════════════════════════════════════════════════════════
+# PAYMENT — ZiniPay integrated
+# ══════════════════════════════════════════════════════════════
+
 async def pay_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     kb = []
     for key, plan in db.PLANS.items():
@@ -346,14 +357,17 @@ async def plan_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data["final_price"] = final_price
     ctx.user_data["final_usdt"]  = final_usdt
     discount_text = f"\n🎟 {discount}% discount applied!" if discount else ""
+
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📱 bKash",        callback_data="pm_bkash")],
-        [InlineKeyboardButton("📱 Nagad",        callback_data="pm_nagad")],
-        [InlineKeyboardButton("💰 Binance USDT", callback_data="pm_binance")],
-        [InlineKeyboardButton("❌ Cancel",        callback_data="cancel")],
+        [InlineKeyboardButton("⚡ ZiniPay — Auto (bKash/Nagad/Rocket)", callback_data="pm_zinipay")],
+        [InlineKeyboardButton("📱 bKash (Manual)",        callback_data="pm_bkash")],
+        [InlineKeyboardButton("📱 Nagad (Manual)",        callback_data="pm_nagad")],
+        [InlineKeyboardButton("💰 Binance USDT",          callback_data="pm_binance")],
+        [InlineKeyboardButton("❌ Cancel",                 callback_data="cancel")],
     ])
     await query.edit_message_text(
-        f"✅ {plan['label']}{discount_text}\n💵 ৳{final_price} / ${final_usdt}\n\nPayment method:",
+        f"✅ {plan['label']}{discount_text}\n💵 ৳{final_price} / ${final_usdt}\n\nPayment method বেছে নাও 👇\n\n"
+        f"⚡ ZiniPay = automatic, instant activation!",
         reply_markup=kb
     )
     return WAIT_TRX
@@ -382,9 +396,15 @@ async def method_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     method = query.data.replace("pm_", "")
     ctx.user_data["method"] = method
+
+    # ── ZiniPay ──────────────────────────────────
+    if method == "zinipay":
+        return await zinipay_cb(update, ctx)
+
     plan  = db.PLANS[ctx.user_data["plan"]]
     price = ctx.user_data.get("final_price", plan["price_bdt"])
     usdt  = ctx.user_data.get("final_usdt",  plan["price_usdt"])
+
     if method == "bkash":
         txt = f"📱 **bKash:** `{BKASH_NUMBER}`\n💰 **৳{price}**\n\nTransaction ID পাঠাও:"
     elif method == "nagad":
@@ -393,6 +413,158 @@ async def method_selected(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         txt = f"💰 **Binance:** `{BINANCE_ID}`\n💵 **${usdt} USDT**\n\nTransaction ID পাঠাও:"
     await query.edit_message_text(txt, parse_mode="Markdown")
     return WAIT_TRX
+
+
+# ── ZiniPay Handlers ─────────────────────────────────────────
+
+async def zinipay_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """ZiniPay select হলে payment link বানাও"""
+    query = update.callback_query
+    user_id = query.from_user.id
+    plan_key = ctx.user_data.get("plan")
+
+    if not plan_key:
+        await query.edit_message_text("❌ Plan select হয়নি! আবার চেষ্টা করো।")
+        return WAIT_PLAN_SELECT
+
+    plan = db.PLANS[plan_key]
+    amount = ctx.user_data.get("final_price", plan["price_bdt"])
+
+    await query.edit_message_text("⏳ ZiniPay payment link বানাচ্ছি...")
+
+    user_info = await ctx.bot.get_chat(user_id)
+    result = await create_zinipay_invoice(
+        user_id=user_id,
+        plan_key=plan_key,
+        amount=amount,
+        user_name=user_info.full_name or "",
+    )
+
+    if not result:
+        await ctx.bot.send_message(
+            user_id,
+            "❌ ZiniPay link বানানো যায়নি!\n\n"
+            "Manual payment করো: 💳 Subscribe করুন চেপে bKash/Nagad বেছে নাও।"
+        )
+        return ConversationHandler.END
+
+    payment_url = result["payment_url"]
+    val_id = result["val_id"]
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Payment করো →", url=payment_url)],
+        [InlineKeyboardButton("✅ Payment করেছি — Verify", callback_data=f"zini_verify_{val_id}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+    ])
+
+    await ctx.bot.send_message(
+        user_id,
+        f"⚡ *ZiniPay Payment Link Ready!*\n\n"
+        f"✅ Plan: {plan['label']}\n"
+        f"💰 Amount: ৳{amount}\n\n"
+        f"👇 নিচের button চেপে pay করো:\n"
+        f"bKash / Nagad / Rocket / Upay সব accept হবে!\n\n"
+        f"Payment শেষে _'✅ Payment করেছি'_ চাপো।",
+        parse_mode="Markdown",
+        reply_markup=kb
+    )
+    return ConversationHandler.END
+
+
+async def zinipay_verify_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """User payment করার পর verify বোতাম চাপলে"""
+    query = update.callback_query
+    await query.answer()
+
+    val_id = query.data.replace("zini_verify_", "")
+    user_id = query.from_user.id
+
+    await query.edit_message_text("⏳ Payment verify করছি...")
+
+    payment = await get_zinipay_payment_by_val_id(val_id)
+    if not payment:
+        await ctx.bot.send_message(user_id, "❌ Payment record পাওয়া যায়নি!")
+        return
+
+    invoice_id = payment["payment_url"].split("/")[-1]
+    result = await verify_zinipay_invoice(invoice_id)
+
+    if not result:
+        await ctx.bot.send_message(
+            user_id,
+            "❌ Verify করা যায়নি! কিছুক্ষণ পর আবার চেষ্টা করো।",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 আবার Verify", callback_data=f"zini_verify_{val_id}")]
+            ])
+        )
+        return
+
+    status = result.get("status", "").upper()
+
+    if status == "COMPLETED":
+        success = await approve_zinipay_payment(val_id)
+        if success:
+            plan = db.PLANS[payment["plan"]]
+            await ctx.bot.send_message(
+                user_id,
+                f"🎉 *Payment Verified! Automatic!*\n\n"
+                f"✅ {plan['label']} activate হয়েছে!\n"
+                f"🎤 {plan['voice_limit']} voices পেয়েছ!\n\n"
+                f"🎤 Voice বানান চাপো!",
+                parse_mode="Markdown"
+            )
+            try:
+                await ctx.bot.send_message(
+                    ADMIN_ID,
+                    f"⚡ ZiniPay Auto Payment!\n\n"
+                    f"👤 User: `{user_id}`\n"
+                    f"💳 Plan: {plan['label']}\n"
+                    f"💰 ৳{payment['amount']}\n"
+                    f"✅ Auto verified & activated!",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+            # Invoice পাঠাও
+            if HAS_INVOICE:
+                try:
+                    user_info = await ctx.bot.get_chat(user_id)
+                    invoice_path = generate_invoice(
+                        user_name=user_info.full_name,
+                        plan_label=plan['label'],
+                        amount=payment['amount'],
+                        method="ZiniPay",
+                        trx_id=val_id
+                    )
+                    await ctx.bot.send_document(
+                        chat_id=user_id,
+                        document=open(invoice_path, 'rb'),
+                        filename=f"invoice_{val_id[:8]}.pdf",
+                        caption="📄 তোমার payment invoice!"
+                    )
+                    os.unlink(invoice_path)
+                except Exception as e:
+                    logger.error(f"Invoice error: {e}")
+        else:
+            await ctx.bot.send_message(user_id, "✅ Already activated!")
+
+    elif status == "PENDING":
+        await ctx.bot.send_message(
+            user_id,
+            "⏳ Payment এখনো pending!\n\nPayment complete হলে আবার verify করো।",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 আবার Verify", callback_data=f"zini_verify_{val_id}")]
+            ])
+        )
+    else:
+        await ctx.bot.send_message(
+            user_id,
+            f"❌ Payment failed! Status: {status}\n\n"
+            "আবার চেষ্টা করো অথবা manual payment করো।"
+        )
+
+
+# ── Manual Payment Handlers ───────────────────────────────────
 
 async def receive_trx(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -508,7 +680,8 @@ async def admin_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("🔔 Expiry",     callback_data="adm_expiry")],
         [InlineKeyboardButton("😴 Inactive",   callback_data="adm_inactive"),
          InlineKeyboardButton("🤝 Reseller",   callback_data="adm_reseller")],
-        [InlineKeyboardButton("📱 SMS Setup",  callback_data="adm_smssetup")],
+        [InlineKeyboardButton("⚡ ZiniPay",    callback_data="adm_zinipay"),
+         InlineKeyboardButton("📱 SMS Setup",  callback_data="adm_smssetup")],
     ])
     await update.message.reply_text(
         f"🛠 Admin Panel\n\n"
@@ -619,6 +792,22 @@ async def admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "Pending list: /smslist"
         )
 
+    elif query.data == "adm_zinipay":
+        # ── ZiniPay pending payments দেখো ──
+        zini_payments = await get_pending_zinipay_payments()
+        if not zini_payments:
+            await query.edit_message_text("⚡ কোনো pending ZiniPay payment নেই!")
+            return
+        text = f"⚡ {len(zini_payments)} ZiniPay Pending:\n\n"
+        for p in zini_payments:
+            text += (
+                f"👤 {p['full_name']}\n"
+                f"💳 {p['plan']} | ৳{p['amount']}\n"
+                f"🔑 `{p['val_id'][:20]}...`\n"
+                f"📅 {p['created_at'][:16]}\n\n"
+            )
+        await query.edit_message_text(text[:4000], parse_mode="Markdown")
+
 async def admin_text_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -692,35 +881,23 @@ async def cancel_and_handle(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 def is_sms_text(text: str) -> tuple:
-    """
-    ✅ যেকোনো format এ SMS detect করে
-    MacroDroid থেকে যেভাবেই আসুক — number দিয়ে শুরু হলেও
-    Returns: (is_sms, sender, message)
-    """
     t = text.lower()
-
-    # bKash/Nagad keyword আছে কিনা
     has_payment = any(x in t for x in ['txnid', 'trxid', 'trnid', 'tk ', 'amount'])
     has_method = any(x in t for x in ['nagad', 'bkash', 'money received', 'received tk', 'payment of tk'])
-
     if not has_payment:
         return False, None, None
-
-    # Sender detect
     if 'nagad' in t or 'money received' in t or 'txnid:' in t:
         sender = 'Nagad'
     elif 'bkash' in t or 'trxid' in t:
         sender = 'bKash'
     else:
-        sender = 'Nagad'  # default
-
+        sender = 'Nagad'
     return True, sender, text
 
 async def handle_buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
 
-    # ✅ /sms command handle
     if text and text.startswith("/sms ") and user_id == ADMIN_ID:
         rest = text[5:].strip()
         parts = rest.split(" ", 1)
@@ -731,7 +908,6 @@ async def handle_buttons(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await sms_handler(update, ctx)
         return
 
-    # ✅ MacroDroid থেকে যেকোনো format এ SMS auto-detect
     if text and user_id == ADMIN_ID:
         is_sms, sender, message = is_sms_text(text)
         if is_sms:
@@ -822,6 +998,10 @@ def main():
 
     app.add_handler(voice_conv)
     app.add_handler(pay_conv)
+
+    # ── ZiniPay handlers ──
+    app.add_handler(CallbackQueryHandler(zinipay_verify_cb, pattern="^zini_verify_"))
+
     app.add_handler(CallbackQueryHandler(payment_action_cb, pattern="^approve_|^reject_"))
     app.add_handler(CallbackQueryHandler(admin_cb, pattern="^adm_"))
     app.add_handler(CallbackQueryHandler(fav_cb, pattern="^fav_"))
@@ -830,7 +1010,7 @@ def main():
     app.add_handler(CallbackQueryHandler(menu_cb, pattern="^cancel$|^gift_sub$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_buttons))
 
-    logger.info("✅ Bot started!")
+    logger.info("✅ Bot started with ZiniPay integration!")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
