@@ -17,7 +17,7 @@ from zinipay import (
     create_zinipay_invoice,
     verify_zinipay_invoice,
     approve_zinipay_payment,
-    get_zinipay_payment_by_val_id,
+    get_zinipay_payment,
     get_pending_zinipay_payments,
 )
 
@@ -449,11 +449,11 @@ async def zinipay_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     payment_url = result["payment_url"]
-    val_id = result["val_id"]
+    invoice_id = result["invoice_id"]
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("💳 Payment করো →", url=payment_url)],
-        [InlineKeyboardButton("✅ Payment করেছি — Verify", callback_data=f"zini_verify_{val_id}")],
+        [InlineKeyboardButton("✅ Payment করেছি — Verify", callback_data=f"zini_verify_{invoice_id}")],
         [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
     ])
 
@@ -476,17 +476,16 @@ async def zinipay_verify_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    val_id = query.data.replace("zini_verify_", "")
+    invoice_id = query.data.replace("zini_verify_", "")
     user_id = query.from_user.id
 
     await query.edit_message_text("⏳ Payment verify করছি...")
 
-    payment = await get_zinipay_payment_by_val_id(val_id)
+    payment = await get_zinipay_payment(invoice_id)
     if not payment:
         await ctx.bot.send_message(user_id, "❌ Payment record পাওয়া যায়নি!")
         return
 
-    invoice_id = payment["payment_url"].split("/")[-1]
     result = await verify_zinipay_invoice(invoice_id)
 
     if not result:
@@ -494,7 +493,7 @@ async def zinipay_verify_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             user_id,
             "❌ Verify করা যায়নি! কিছুক্ষণ পর আবার চেষ্টা করো।",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 আবার Verify", callback_data=f"zini_verify_{val_id}")]
+                [InlineKeyboardButton("🔄 আবার Verify", callback_data=f"zini_verify_{invoice_id}")]
             ])
         )
         return
@@ -502,7 +501,7 @@ async def zinipay_verify_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     status = result.get("status", "").upper()
 
     if status == "COMPLETED":
-        success = await approve_zinipay_payment(val_id)
+        success = await approve_zinipay_payment(invoice_id)
         if success:
             plan = db.PLANS[payment["plan"]]
             await ctx.bot.send_message(
@@ -534,7 +533,7 @@ async def zinipay_verify_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                         plan_label=plan['label'],
                         amount=payment['amount'],
                         method="ZiniPay",
-                        trx_id=val_id
+                        trx_id=invoice_id
                     )
                     await ctx.bot.send_document(
                         chat_id=user_id,
@@ -553,7 +552,7 @@ async def zinipay_verify_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             user_id,
             "⏳ Payment এখনো pending!\n\nPayment complete হলে আবার verify করো।",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 আবার Verify", callback_data=f"zini_verify_{val_id}")]
+                [InlineKeyboardButton("🔄 আবার Verify", callback_data=f"zini_verify_{invoice_id}")]
             ])
         )
     else:
