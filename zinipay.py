@@ -47,11 +47,12 @@ async def create_zinipay_invoice(user_id: int, plan_key: str, amount: int, user_
             logger.info(f"ZiniPay create response: {data}")
 
             if data.get("status") and data.get("payment_url"):
-                await save_zinipay_payment(user_id, plan_key, amount, invoice_id, data["payment_url"])
+                zini_val_id = data.get("val_id", invoice_id)
+                await save_zinipay_payment(user_id, plan_key, amount, invoice_id, data["payment_url"], zini_val_id)
                 return {
                     "payment_url": data["payment_url"],
                     "invoice_id": invoice_id,
-                    "val_id": data.get("val_id", invoice_id),
+                    "val_id": zini_val_id,
                 }
             else:
                 logger.error(f"ZiniPay create failed: {data}")
@@ -61,7 +62,7 @@ async def create_zinipay_invoice(user_id: int, plan_key: str, amount: int, user_
         return None
 
 
-async def verify_zinipay_invoice(invoice_id: str) -> dict | None:
+async def verify_zinipay_invoice(val_id: str) -> dict | None:
     if not ZINIPAY_API_KEY:
         return None
 
@@ -69,7 +70,7 @@ async def verify_zinipay_invoice(invoice_id: str) -> dict | None:
         async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 f"{ZINIPAY_BASE_URL}/v1/payment/verify",
-                json={"invoice_id": invoice_id},
+                json={"invoice_id": val_id},
                 headers={
                     "Content-Type": "application/json",
                     "zini-api-key": ZINIPAY_API_KEY,
@@ -83,7 +84,7 @@ async def verify_zinipay_invoice(invoice_id: str) -> dict | None:
         return None
 
 
-async def save_zinipay_payment(user_id: int, plan_key: str, amount: int, invoice_id: str, payment_url: str):
+async def save_zinipay_payment(user_id: int, plan_key: str, amount: int, invoice_id: str, payment_url: str, val_id: str = ""):
     async with aiosqlite.connect(db.DB_PATH) as conn:
         try:
             await conn.execute("""
@@ -93,6 +94,7 @@ async def save_zinipay_payment(user_id: int, plan_key: str, amount: int, invoice
                     plan TEXT,
                     amount REAL,
                     invoice_id TEXT UNIQUE,
+                    val_id TEXT,
                     payment_url TEXT,
                     status TEXT DEFAULT 'pending',
                     created_at TEXT DEFAULT (datetime('now')),
@@ -100,9 +102,9 @@ async def save_zinipay_payment(user_id: int, plan_key: str, amount: int, invoice
                 )
             """)
             await conn.execute("""
-                INSERT INTO zinipay_payments (user_id, plan, amount, invoice_id, payment_url)
-                VALUES (?, ?, ?, ?, ?)
-            """, (user_id, plan_key, amount, invoice_id, payment_url))
+                INSERT INTO zinipay_payments (user_id, plan, amount, invoice_id, val_id, payment_url)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (user_id, plan_key, amount, invoice_id, val_id, payment_url))
             await conn.commit()
         except Exception as e:
             logger.error(f"ZiniPay DB save error: {e}")
