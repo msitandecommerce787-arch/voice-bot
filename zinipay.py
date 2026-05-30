@@ -29,6 +29,8 @@ async def create_zinipay_invoice(user_id: int, plan_key: str, amount: int, user_
         "amount": amount,
         "invoice_id": invoice_id,
         "val_id": invoice_id,
+        "redirect_url": "https://t.me/Ms_voice_bot",
+        "cancel_url": "https://t.me/Ms_voice_bot",
     }
 
     try:
