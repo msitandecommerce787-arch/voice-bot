@@ -13,13 +13,7 @@ from telegram.ext import (
 import database as db
 from scheduler import start_scheduler
 from sms_parser import sms_handler, sms_list_handler
-from zinipay import (
-    create_zinipay_invoice,
-    verify_zinipay_invoice,
-    approve_zinipay_payment,
-    get_zinipay_payment,
-    get_pending_zinipay_payments,
-)
+from zinipay import create_zinipay_invoice, verify_zinipay_invoice
 
 try:
     from invoice import generate_invoice
@@ -481,14 +475,14 @@ async def zinipay_verify_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text("⏳ Payment verify করছি...")
 
-    payment = await get_zinipay_payment(invoice_id)
+    payment = await db.get_zinipay_payment(invoice_id)
     if not payment:
         await ctx.bot.send_message(user_id, "❌ Payment record পাওয়া যায়নি!")
         return
 
-    # val_id দিয়ে verify করো
-    verify_id = payment["val_id"] if payment["val_id"] else invoice_id
-    result = await verify_zinipay_invoice(verify_id)
+    # val_id দিয়ে verify করো — payment URL এর UUID ব্যবহার করো
+    payment_uuid = payment["payment_url"].split("/")[-1]
+    result = await verify_zinipay_invoice(payment_uuid)
 
     if not result:
         await ctx.bot.send_message(
@@ -505,7 +499,7 @@ async def zinipay_verify_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     payment_status = result.get("payment_status", "")
     
     if raw_status is True or str(payment_status).upper() == "COMPLETED" or result.get("transaction_id"):
-        success = await approve_zinipay_payment(invoice_id)
+        success = await db.approve_zinipay_payment(invoice_id)
         if success:
             plan = db.PLANS[payment["plan"]]
             await ctx.bot.send_message(
@@ -797,7 +791,7 @@ async def admin_cb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "adm_zinipay":
         # ── ZiniPay pending payments দেখো ──
-        zini_payments = await get_pending_zinipay_payments()
+        zini_payments = await db.get_pending_zinipay_payments()
         if not zini_payments:
             await query.edit_message_text("⚡ কোনো pending ZiniPay payment নেই!")
             return
